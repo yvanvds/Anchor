@@ -3,7 +3,7 @@ using Anchor.Domain.Users;
 
 namespace Anchor.Infrastructure.Users;
 
-internal sealed class InMemoryUserStore : IUserStore
+public sealed class InMemoryUserStore : IUserStore
 {
     private readonly ConcurrentDictionary<Guid, User> _byEntraOid = new();
 
