@@ -103,6 +103,64 @@ public class SessionCoordinatorTests
     }
 
     [Fact]
+    public async Task SessionJoined_fires_after_confirmation_and_JoinSession_succeeds()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi { NextDecision = JoinDecision.Confirmed };
+        var coordinator = NewCoordinator(hub, ui);
+
+        SessionStartedPayload? joined = null;
+        coordinator.SessionJoined += (_, p) => joined = p;
+        Guid? left = null;
+        coordinator.SessionLeft += (_, id) => left = id;
+
+        var payload = Payload();
+        await coordinator.HandleSessionStartedAsync(payload);
+
+        Assert.Equal(payload, joined);
+        Assert.Equal(payload.SessionId, coordinator.JoinedSessionId);
+        Assert.Null(left);
+
+        coordinator.HandleSessionEnded(payload.SessionId);
+
+        Assert.Equal(payload.SessionId, left);
+        Assert.Null(coordinator.JoinedSessionId);
+    }
+
+    [Fact]
+    public async Task SessionJoined_does_not_fire_when_decline_or_abort()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi { NextDecision = JoinDecision.Declined };
+        var coordinator = NewCoordinator(hub, ui);
+
+        var joinedFired = false;
+        coordinator.SessionJoined += (_, _) => joinedFired = true;
+
+        await coordinator.HandleSessionStartedAsync(Payload());
+
+        Assert.False(joinedFired);
+        Assert.Null(coordinator.JoinedSessionId);
+    }
+
+    [Fact]
+    public async Task SessionLeft_does_not_fire_for_session_that_was_never_joined()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi { NextDecision = JoinDecision.Declined };
+        var coordinator = NewCoordinator(hub, ui);
+
+        var leftFired = false;
+        coordinator.SessionLeft += (_, _) => leftFired = true;
+
+        var payload = Payload();
+        await coordinator.HandleSessionStartedAsync(payload);
+        coordinator.HandleSessionEnded(payload.SessionId);
+
+        Assert.False(leftFired);
+    }
+
+    [Fact]
     public async Task Payload_propagates_to_ui_with_placeholder_teacher_name()
     {
         var hub = new FakeHub();
@@ -149,6 +207,8 @@ public class SessionCoordinatorTests
             LeaveCalls.Add(sessionId);
             return Task.CompletedTask;
         }
+        public Task ReportEventAsync(Guid sessionId, string kind, string payloadJson, DateTimeOffset? occurredAt = null, CancellationToken ct = default) =>
+            Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 

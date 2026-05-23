@@ -18,6 +18,7 @@ public sealed class SessionCoordinator : IAsyncDisposable
 
     private JoinConfirmation? _active;
     private Guid? _activeSessionId;
+    private Guid? _joinedSessionId;
 
     public SessionCoordinator(
         ISessionHubConnection hub,
@@ -45,6 +46,24 @@ public sealed class SessionCoordinator : IAsyncDisposable
     {
         get { lock (_gate) return _activeSessionId; }
     }
+
+    public Guid? JoinedSessionId
+    {
+        get { lock (_gate) return _joinedSessionId; }
+    }
+
+    /// <summary>
+    /// Fires after the student successfully joins a session (post-confirmation,
+    /// after <c>JoinSession</c> returns). Subscribers should treat this as the
+    /// signal that focus enforcement should begin.
+    /// </summary>
+    public event EventHandler<SessionStartedPayload>? SessionJoined;
+
+    /// <summary>
+    /// Fires when an active session ends — teacher action, decline-after-join,
+    /// or local cleanup. Subscribers should stop any in-session work.
+    /// </summary>
+    public event EventHandler<Guid>? SessionLeft;
 
     private async void OnSessionStarted(object? sender, SessionStartedPayload payload)
     {
@@ -77,12 +96,14 @@ public sealed class SessionCoordinator : IAsyncDisposable
 
         var decision = await _ui.ShowJoinConfirmationAsync(confirmation, ct).ConfigureAwait(false);
 
+        var joined = false;
         switch (decision)
         {
             case JoinDecision.Confirmed:
                 try
                 {
                     await _hub.JoinSessionAsync(payload.SessionId, joinCode: null, ct).ConfigureAwait(false);
+                    joined = true;
                     _log.LogInformation("Joined session {SessionId}", payload.SessionId);
                 }
                 catch (Exception ex)
@@ -114,7 +135,12 @@ public sealed class SessionCoordinator : IAsyncDisposable
                 if (decision != JoinDecision.Confirmed)
                     _activeSessionId = null;
             }
+            if (joined)
+                _joinedSessionId = payload.SessionId;
         }
+
+        if (joined)
+            SessionJoined?.Invoke(this, payload);
     }
 
     private void OnSessionEnded(object? sender, Guid sessionId)
@@ -133,6 +159,7 @@ public sealed class SessionCoordinator : IAsyncDisposable
     {
         JoinConfirmation? toCancel = null;
         bool matched;
+        bool wasJoined;
         lock (_gate)
         {
             if (_active is not null && _active.Payload.SessionId == sessionId)
@@ -143,10 +170,15 @@ public sealed class SessionCoordinator : IAsyncDisposable
             matched = _activeSessionId == sessionId;
             if (matched)
                 _activeSessionId = null;
+            wasJoined = _joinedSessionId == sessionId;
+            if (wasJoined)
+                _joinedSessionId = null;
         }
         toCancel?.Abort();
         if (matched)
             _ui.DismissJoinConfirmation();
+        if (wasJoined)
+            SessionLeft?.Invoke(this, sessionId);
         _log.LogInformation("Session {SessionId} ended", sessionId);
     }
 
@@ -155,8 +187,17 @@ public sealed class SessionCoordinator : IAsyncDisposable
         _hub.SessionStarted -= OnSessionStarted;
         _hub.SessionEnded -= OnSessionEnded;
         JoinConfirmation? active;
-        lock (_gate) { active = _active; _active = null; }
+        Guid? joined;
+        lock (_gate)
+        {
+            active = _active;
+            _active = null;
+            joined = _joinedSessionId;
+            _joinedSessionId = null;
+        }
         active?.Abort();
+        if (joined is Guid id)
+            SessionLeft?.Invoke(this, id);
         await Task.CompletedTask;
     }
 }
