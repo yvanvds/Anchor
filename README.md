@@ -52,7 +52,7 @@ Design rationale, technology decisions, data model, and phasing live in [focus-s
 | --- | --- | --- | --- |
 | Backend API | [backend/](backend/) | Scaffolded | ASP.NET Core 8, EF Core, SignalR, Entra (Microsoft.Identity.Web) |
 | Teacher dashboard | [dashboard/](dashboard/) | Scaffolded | Flutter Web, MSAL.js |
-| Student agent | — | Not yet scaffolded | WinUI 3 + C#, MSIX, WAM silent auth |
+| Student agent | [agent/](agent/) | Scaffolded | WinUI 3 + C#, MSIX (later), WAM silent auth (later) |
 | Edge extension | — | Not yet scaffolded | TypeScript, Edge (Chromium) MV3 |
 | Azure infra | [infra/](infra/) | Scaffolded | Bicep — App Service, Azure SQL, SignalR, Static Web Apps |
 
@@ -97,7 +97,15 @@ flutter run -d chrome
 
 ### Student agent
 
-Not yet scaffolded. Tracked in the build plan as **Phase 2** of [focus-system-design.md](focus-system-design.md#11-build-phases). Build/run instructions will be added here once the project exists.
+See [agent/README.md](agent/README.md) for full details (layout, prerequisites, configuration, log paths). Quick start:
+
+```powershell
+cd agent
+dotnet restore
+dotnet run --project src/FocusAgent.App -c Debug -p:Platform=x64
+```
+
+This is the Phase 2 scaffold — tray icon, hidden main window, single instance, settings, and logging. Auth, SignalR listener, foreground hook, and MSIX packaging land in follow-up issues.
 
 ### Edge extension
 
