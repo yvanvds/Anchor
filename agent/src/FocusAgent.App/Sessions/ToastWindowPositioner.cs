@@ -9,16 +9,22 @@ using WinRT.Interop;
 namespace FocusAgent.App.Sessions;
 
 /// <summary>
-/// Sizes a <see cref="Window"/> as a compact non-focus-stealing toast pinned
-/// to the top-right of the primary monitor's work area. The window is shown
-/// with <c>SW_SHOWNOACTIVATE</c> so it does not pull focus away from whatever
-/// the student is currently doing (per issue #31 acceptance criteria).
+/// Sizes a <see cref="Window"/> as a compact toast pinned to the top-right of
+/// the primary monitor's work area, then shows it without stealing focus from
+/// whatever the student is currently doing (per #31 acceptance criteria).
+///
+/// The XAML island that renders the window's content is only initialised on
+/// <see cref="Window.Activate"/>; earlier versions of this file used raw
+/// <c>ShowWindow(SW_SHOWNOACTIVATE)</c>, which made the HWND visible but
+/// skipped the WinUI show path entirely — the XAML stayed unrendered, so the
+/// toast never appeared. That's the root cause of #41. The fix is to
+/// <see cref="Window.Activate"/> (forcing the XAML island to render) and
+/// immediately restore foreground to whatever was active before, which the OS
+/// allows because this thread just received focus.
 /// </summary>
 [SupportedOSPlatform("windows10.0.17763.0")]
 internal static class ToastWindowPositioner
 {
-    private const int SW_SHOWNOACTIVATE = 4;
-
     private const int ToastWidthDip = 380;
     private const int ToastHeightDip = 160;
     private const int ToastMarginDip = 24;
@@ -51,14 +57,25 @@ internal static class ToastWindowPositioner
         var x = workArea.X + workArea.Width - width - margin;
         var y = workArea.Y + margin;
 
+        // Activate FIRST so WinUI initialises the XAML island + composition
+        // surface, THEN MoveAndResize so the rendered content is repositioned
+        // along with the HWND. After that, restore foreground to whatever the
+        // student was using — Windows allows this because this thread just
+        // received focus, so the toast stays topmost but doesn't keep input.
+        var originalForeground = GetForegroundWindow();
+        window.Activate();
         appWindow.MoveAndResize(new RectInt32(x, y, width, height));
-        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        if (originalForeground != IntPtr.Zero && originalForeground != hwnd)
+            SetForegroundWindow(originalForeground);
     }
 
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(nint hwnd);
 
     [DllImport("user32.dll")]
+    private static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool ShowWindow(nint hWnd, int nCmdShow);
+    private static extern bool SetForegroundWindow(nint hWnd);
 }
