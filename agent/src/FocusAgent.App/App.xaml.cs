@@ -4,6 +4,7 @@ using FocusAgent.App.Realtime;
 using FocusAgent.App.Sessions;
 using FocusAgent.App.Tray;
 using FocusAgent.Core.Auth;
+using FocusAgent.Core.Dtos;
 using FocusAgent.Core.Focus;
 using FocusAgent.Core.Logging;
 using FocusAgent.Core.Realtime;
@@ -14,6 +15,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Serilog;
@@ -29,6 +31,9 @@ public partial class App : Application
     private SessionCoordinator? _coordinator;
     private FocusSessionController? _focus;
     private ISessionHubConnection? _hub;
+    // Held only by the --show-test-toast path so the logger outlives the
+    // async show/decide chain rather than getting disposed at OnLaunched return.
+    private ILoggerFactory? _testLoggerFactory;
 
     public App()
     {
@@ -37,6 +42,12 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        if (Program.ShowTestToast)
+        {
+            RunToastSelfTest();
+            return;
+        }
+
         try
         {
             var dispatcher = DispatcherQueue.GetForCurrentThread();
@@ -81,15 +92,88 @@ public partial class App : Application
             var tokens = services.GetRequiredService<IAuthTokenProvider>();
             var auth = await tokens.AcquireTokenAsync().ConfigureAwait(true);
             LastDisplayName = auth.DisplayName;
-            _tray?.UpdateStatus(AgentConnectionState.Connecting, LastDisplayName);
-            await _hub!.StartAsync().ConfigureAwait(true);
-            _tray?.UpdateStatus(AgentConnectionState.Connected, LastDisplayName);
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to start hub connection");
+            logger.LogError(ex, "Failed to acquire access token");
             _tray?.UpdateStatus(AgentConnectionState.Disconnected, LastDisplayName);
+            return;
         }
+
+        // SignalR's WithAutomaticReconnect only fires AFTER a connection has
+        // been established at least once. Without a first-connect backoff loop
+        // a dev who launches the agent before the backend gets a one-shot
+        // failure that leaves the tray stuck Disconnected forever (#43). Use
+        // the same exponential cap as the post-establishment retry policy.
+        var attempt = 0;
+        while (true)
+        {
+            _tray?.UpdateStatus(
+                attempt == 0 ? AgentConnectionState.Connecting : AgentConnectionState.Reconnecting,
+                LastDisplayName);
+            try
+            {
+                await _hub!.StartAsync().ConfigureAwait(true);
+                _tray?.UpdateStatus(AgentConnectionState.Connected, LastDisplayName);
+                return;
+            }
+            catch (Exception ex)
+            {
+                attempt++;
+                var seconds = Math.Min(30, Math.Pow(2, Math.Min(attempt, 5)));
+                logger.LogWarning(ex,
+                    "Initial hub connect failed (attempt {Attempt}); retrying in {Seconds:0}s",
+                    attempt, seconds);
+                _tray?.UpdateStatus(AgentConnectionState.Disconnected, LastDisplayName);
+                await Task.Delay(TimeSpan.FromSeconds(seconds)).ConfigureAwait(true);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Dev-only path: skip host/WAM/hub bootstrap and just render the join
+    /// toast against a synthetic payload, then exit after the countdown so
+    /// scripts/dev/verify-toast.ps1 can screenshot it. See Program.cs.
+    /// </summary>
+    private void RunToastSelfTest()
+    {
+        var dispatcher = DispatcherQueue.GetForCurrentThread();
+        var logDir = AgentLogPaths.LocalAppDataLogDirectory();
+        Directory.CreateDirectory(logDir);
+        var serilog = new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.File(
+                path: Path.Combine(logDir, "focusagent-toasttest-.log"),
+                rollingInterval: RollingInterval.Day,
+                retainedFileCountLimit: 3,
+                outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}")
+            .CreateLogger();
+        _testLoggerFactory = LoggerFactory.Create(b => b.AddSerilog(serilog, dispose: true));
+        var log = _testLoggerFactory.CreateLogger<App>();
+        log.LogInformation("--show-test-toast: starting toast self-test");
+
+        var ui = new WinUiSessionUiHost(dispatcher, _testLoggerFactory.CreateLogger<WinUiSessionUiHost>());
+        var payload = new SessionStartedPayload(
+            SessionId: Guid.Parse("00000000-0000-0000-0000-000000000041"),
+            ClassId: Guid.NewGuid(),
+            Mode: "Strict",
+            StartedAt: DateTimeOffset.UtcNow,
+            JoinCode: "TOAST41");
+        var confirmation = new JoinConfirmation(payload, "Self-Test Teacher", TimeSpan.FromSeconds(5), TimeProvider.System);
+
+        // Kick off the show on the UI thread — ShowJoinConfirmationAsync
+        // internally enqueues window creation. The returned Task completes when
+        // the 5s countdown elapses; we then exit after a screenshot buffer.
+        var showTask = ui.ShowJoinConfirmationAsync(confirmation);
+        _ = showTask.ContinueWith(t =>
+        {
+            log.LogInformation(
+                "--show-test-toast: confirmation completed status={Status} decision={Decision}",
+                t.Status,
+                t.Status == TaskStatus.RanToCompletion ? (object)t.Result : t.Exception?.Message ?? "<none>");
+            return Task.Delay(TimeSpan.FromMilliseconds(1500))
+                .ContinueWith(_ => dispatcher.TryEnqueue(Exit));
+        });
     }
 
     private static void WriteStartupFailure(Exception ex)

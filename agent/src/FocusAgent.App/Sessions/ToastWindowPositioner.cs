@@ -57,10 +57,14 @@ internal static class ToastWindowPositioner
         var x = workArea.X + workArea.Width - width - margin;
         var y = workArea.Y + margin;
 
-        appWindow.MoveAndResize(new RectInt32(x, y, width, height));
-
+        // Activate FIRST so WinUI initialises the XAML island + composition
+        // surface, THEN MoveAndResize so the rendered content is repositioned
+        // along with the HWND. After that, restore foreground to whatever the
+        // student was using — Windows allows this because this thread just
+        // received focus, so the toast stays topmost but doesn't keep input.
         var originalForeground = GetForegroundWindow();
         window.Activate();
+        appWindow.MoveAndResize(new RectInt32(x, y, width, height));
         if (originalForeground != IntPtr.Zero && originalForeground != hwnd)
             SetForegroundWindow(originalForeground);
     }

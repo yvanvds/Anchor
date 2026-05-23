@@ -158,7 +158,12 @@ public sealed class WamTokenProvider : IAuthTokenProvider, IAsyncDisposable
             .WithAuthority(AzureCloudInstance.AzurePublic, _settings.TenantId)
             .WithDefaultRedirectUri()
             .WithBroker(new BrokerOptions(BrokerOptions.OperatingSystems.Windows))
-            .WithLogging(ForwardMsalLog, Microsoft.Identity.Client.LogLevel.Info, enablePiiLogging: false, enableDefaultPlatformLogging: true);
+            // Cap to Warning to avoid drowning the file logger in MSAL telemetry
+            // (per-call there are dozens of Info lines: telemetry dumps, cache
+            // partition counts, key-by-key reads, …). Warning+ catches the
+            // signal we actually need — broker failures emit Warning/Error
+            // with the surrounding context.
+            .WithLogging(ForwardMsalLog, Microsoft.Identity.Client.LogLevel.Warning, enablePiiLogging: false, enableDefaultPlatformLogging: true);
 
         _app = builder.Build();
 
