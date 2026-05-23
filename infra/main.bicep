@@ -9,8 +9,17 @@
 @description('Azure region for all resources.')
 param location string = 'westeurope'
 
-@description('Unique suffix appended to globally-unique resource names.')
-param uniqueSuffix string = uniqueString(resourceGroup().id)
+@description('Suffix appended to globally-unique resource names. Defaults to "arcadia" to match the existing anchor-rg deployment; override to stand up a second environment.')
+param uniqueSuffix string = 'arcadia'
+
+@description('Name of the App Service Plan. Defaults to the auto-generated name of the original manually-created plan in anchor-rg.')
+param appServicePlanName string = 'ASP-anchorrg-b49b'
+
+@description('Name of the SignalR Service. Not suffixed in the original deployment; override for additional environments.')
+param signalrName string = 'anchor-signalr'
+
+@description('Name of the Static Web App for the Flutter dashboard. Not suffixed in the original deployment; override for additional environments.')
+param staticWebAppName string = 'anchor-dashboard'
 
 @description('SQL admin username.')
 param sqlAdminLogin string = 'anchoradmin'
@@ -64,7 +73,7 @@ resource sqlDb 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
 // ── App Service Plan (Linux, Free) ──────────
 
 resource appPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
-  name: 'anchor-plan'
+  name: appServicePlanName
   location: location
   kind: 'linux'
   properties: {
@@ -105,7 +114,7 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
 // ── SignalR Service (Free) ──────────────────
 
 resource signalr 'Microsoft.SignalRService/signalR@2024-03-01' = {
-  name: 'anchor-signalr-${uniqueSuffix}'
+  name: signalrName
   location: location
   sku: {
     name: 'Free_F1'
@@ -124,7 +133,7 @@ resource signalr 'Microsoft.SignalRService/signalR@2024-03-01' = {
 // ── Static Web App (Flutter dashboard) ──────
 
 resource swa 'Microsoft.Web/staticSites@2023-12-01' = {
-  name: 'anchor-dashboard-${uniqueSuffix}'
+  name: staticWebAppName
   location: location
   sku: {
     name: 'Free'

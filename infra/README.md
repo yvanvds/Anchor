@@ -119,15 +119,17 @@ After creation:
 
 ## Resources created
 
+Default names below assume `uniqueSuffix=arcadia` (the live `anchor-rg` deployment). Override the parameters to stand up a second environment.
+
 | Resource | Type | Tier | Monthly cost (dev) |
 |---|---|---|---|
 | `anchor-rg` | Resource group | — | €0 |
-| `anchor-sql-*` | SQL Server (logical) | — | €0 |
+| `anchor-sql-arcadia` | SQL Server (logical) | — | €0 |
 | `anchordb` | SQL Database | GP Serverless, 0.5–2 vCores | €0 (free limit) |
-| `anchor-api-*` | App Service | F1 Free | €0 |
-| `anchor-plan` | App Service Plan | F1 Free, Linux | €0 |
-| `anchor-signalr-*` | SignalR Service | Free | €0 |
-| `anchor-dashboard-*` | Static Web App | Free | €0 |
+| `anchor-api-arcadia` | App Service | F1 Free | €0 |
+| `ASP-anchorrg-b49b` | App Service Plan | F1 Free, Linux | €0 |
+| `anchor-signalr` | SignalR Service | Free | €0 |
+| `anchor-dashboard` | Static Web App | Free | €0 |
 
 **Pilot cost** (Standard SignalR): ~€45/month for SignalR + ~€5–15/month for SQL if it exceeds the free limit.
 
