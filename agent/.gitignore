@@ -1,0 +1,21 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+ARM64/
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+
+# Generated WinUI 3 files
+**/Generated Files/
+*.tlog
+*.pdb
+
+# Rider / VS local
+.vs/
+.idea/
