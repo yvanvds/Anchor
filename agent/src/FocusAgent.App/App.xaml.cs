@@ -1,12 +1,20 @@
+using FocusAgent.App.Auth;
+using FocusAgent.App.Realtime;
+using FocusAgent.App.Sessions;
 using FocusAgent.App.Tray;
+using FocusAgent.Core.Auth;
 using FocusAgent.Core.Logging;
+using FocusAgent.Core.Realtime;
+using FocusAgent.Core.Sessions;
 using FocusAgent.Core.Settings;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Serilog;
+using WinRT.Interop;
 
 namespace FocusAgent.App;
 
@@ -15,6 +23,8 @@ public partial class App : Application
     private IHost? _host;
     private MainWindow? _mainWindow;
     private TrayIconHost? _tray;
+    private SessionCoordinator? _coordinator;
+    private ISessionHubConnection? _hub;
 
     public App()
     {
@@ -25,7 +35,8 @@ public partial class App : Application
     {
         try
         {
-            _host = BuildHost();
+            var dispatcher = DispatcherQueue.GetForCurrentThread();
+            _host = BuildHost(dispatcher, () => _mainWindow is null ? IntPtr.Zero : WindowNative.GetWindowHandle(_mainWindow));
             _host.Start();
 
             var logger = _host.Services.GetRequiredService<ILogger<App>>();
@@ -39,13 +50,40 @@ public partial class App : Application
             _mainWindow = new MainWindow();
             _tray = new TrayIconHost(
                 onOpen: () => _mainWindow.Activate(),
-                onQuit: () => Exit());
+                onQuit: () => Exit(),
+                dispatcher: dispatcher);
             _tray.Show();
+
+            _hub = _host.Services.GetRequiredService<ISessionHubConnection>();
+            _coordinator = _host.Services.GetRequiredService<SessionCoordinator>();
+
+            _hub.StateChanged += (_, state) => _tray.UpdateStatus(state, LastDisplayName);
+            _ = StartHubAsync(_host.Services, logger);
         }
         catch (Exception ex)
         {
             WriteStartupFailure(ex);
             throw;
+        }
+    }
+
+    private string? LastDisplayName { get; set; }
+
+    private async Task StartHubAsync(IServiceProvider services, ILogger<App> logger)
+    {
+        try
+        {
+            var tokens = services.GetRequiredService<IAuthTokenProvider>();
+            var auth = await tokens.AcquireTokenAsync().ConfigureAwait(true);
+            LastDisplayName = auth.DisplayName;
+            _tray?.UpdateStatus(AgentConnectionState.Connecting, LastDisplayName);
+            await _hub!.StartAsync().ConfigureAwait(true);
+            _tray?.UpdateStatus(AgentConnectionState.Connected, LastDisplayName);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to start hub connection");
+            _tray?.UpdateStatus(AgentConnectionState.Disconnected, LastDisplayName);
         }
     }
 
@@ -65,7 +103,7 @@ public partial class App : Application
         }
     }
 
-    private static IHost BuildHost()
+    private static IHost BuildHost(DispatcherQueue dispatcher, Func<IntPtr> windowHandleProvider)
     {
         var builder = Host.CreateApplicationBuilder();
 
@@ -75,6 +113,19 @@ public partial class App : Application
 
         builder.Services.AddOptions<BackendSettings>()
             .Bind(builder.Configuration.GetSection(BackendSettings.SectionName));
+        builder.Services.AddOptions<AuthSettings>()
+            .Bind(builder.Configuration.GetSection(AuthSettings.SectionName));
+        builder.Services.AddOptions<RealtimeSettings>()
+            .Bind(builder.Configuration.GetSection(RealtimeSettings.SectionName));
+
+        builder.Services.AddSingleton(dispatcher);
+        builder.Services.AddSingleton(TimeProvider.System);
+        builder.Services.AddSingleton<Func<IntPtr>>(_ => windowHandleProvider);
+
+        builder.Services.AddSingleton<IAuthTokenProvider, WamTokenProvider>();
+        builder.Services.AddSingleton<ISessionHubConnection, SignalRSessionHubConnection>();
+        builder.Services.AddSingleton<ISessionUiHost, WinUiSessionUiHost>();
+        builder.Services.AddSingleton<SessionCoordinator>();
 
         var logDir = AgentLogPaths.LocalAppDataLogDirectory();
         Directory.CreateDirectory(logDir);

@@ -1,0 +1,187 @@
+using FocusAgent.Core.Dtos;
+using FocusAgent.Core.Realtime;
+using FocusAgent.Core.Sessions;
+using FocusAgent.Core.Settings;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
+
+namespace FocusAgent.Core.Tests;
+
+public class SessionCoordinatorTests
+{
+    private static SessionStartedPayload Payload(Guid? sessionId = null) =>
+        new(SessionId: sessionId ?? Guid.NewGuid(),
+            ClassId: Guid.NewGuid(),
+            Mode: "strict",
+            StartedAt: DateTimeOffset.UnixEpoch,
+            JoinCode: "123456");
+
+    [Fact]
+    public async Task Confirmed_decision_calls_JoinSession_with_null_join_code()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi { NextDecision = JoinDecision.Confirmed };
+        var coordinator = NewCoordinator(hub, ui);
+
+        var payload = Payload();
+        await coordinator.HandleSessionStartedAsync(payload);
+
+        Assert.Single(hub.JoinCalls);
+        Assert.Equal(payload.SessionId, hub.JoinCalls[0].SessionId);
+        Assert.Null(hub.JoinCalls[0].JoinCode);
+        Assert.Empty(hub.LeaveCalls);
+        Assert.Single(ui.Shown);
+        Assert.Equal(payload, ui.Shown[0].Payload);
+    }
+
+    [Fact]
+    public async Task Declined_decision_calls_LeaveSession()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi { NextDecision = JoinDecision.Declined };
+        var coordinator = NewCoordinator(hub, ui);
+
+        var payload = Payload();
+        await coordinator.HandleSessionStartedAsync(payload);
+
+        Assert.Empty(hub.JoinCalls);
+        Assert.Single(hub.LeaveCalls);
+        Assert.Equal(payload.SessionId, hub.LeaveCalls[0]);
+    }
+
+    [Fact]
+    public async Task Aborted_decision_calls_no_hub_methods()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi { NextDecision = JoinDecision.Aborted };
+        var coordinator = NewCoordinator(hub, ui);
+
+        await coordinator.HandleSessionStartedAsync(Payload());
+
+        Assert.Empty(hub.JoinCalls);
+        Assert.Empty(hub.LeaveCalls);
+    }
+
+    [Fact]
+    public async Task SessionEnded_for_matching_session_aborts_active_confirmation()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi { ManualResolve = true };
+        var coordinator = NewCoordinator(hub, ui);
+
+        var payload = Payload();
+        var task = coordinator.HandleSessionStartedAsync(payload);
+        await ui.WaitForShownAsync();
+
+        coordinator.HandleSessionEnded(payload.SessionId);
+
+        await task;
+        Assert.True(ui.Dismissed);
+        Assert.Empty(hub.JoinCalls);
+        Assert.Empty(hub.LeaveCalls);
+        Assert.Equal(JoinDecision.Aborted, ui.Shown[0].Decision);
+        Assert.Null(coordinator.ActiveSessionId);
+    }
+
+    [Fact]
+    public async Task SessionEnded_for_unrelated_session_leaves_active_alone()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi { ManualResolve = true };
+        var coordinator = NewCoordinator(hub, ui);
+
+        var payload = Payload();
+        var task = coordinator.HandleSessionStartedAsync(payload);
+        await ui.WaitForShownAsync();
+
+        coordinator.HandleSessionEnded(Guid.NewGuid());
+
+        Assert.False(ui.Dismissed);
+        ui.Resolve(JoinDecision.Confirmed);
+        await task;
+        Assert.Single(hub.JoinCalls);
+    }
+
+    [Fact]
+    public async Task Payload_propagates_to_ui_with_placeholder_teacher_name()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi { NextDecision = JoinDecision.Confirmed };
+        var coordinator = NewCoordinator(hub, ui);
+
+        var payload = Payload();
+        await coordinator.HandleSessionStartedAsync(payload);
+
+        var shown = ui.Shown[0];
+        Assert.Equal(payload, shown.Payload);
+        Assert.False(string.IsNullOrWhiteSpace(shown.TeacherDisplayName));
+        Assert.Equal(TimeSpan.FromSeconds(5), shown.Duration);
+    }
+
+    private static SessionCoordinator NewCoordinator(FakeHub hub, FakeUi ui)
+    {
+        var settings = Options.Create(new RealtimeSettings { JoinConfirmationDuration = TimeSpan.FromSeconds(5) });
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        return new SessionCoordinator(hub, ui, settings, clock);
+    }
+
+    private sealed class FakeHub : ISessionHubConnection
+    {
+        public AgentConnectionState State => AgentConnectionState.Connected;
+#pragma warning disable CS0067 // Interface events not used by these tests.
+        public event EventHandler<AgentConnectionState>? StateChanged;
+        public event EventHandler<SessionStartedPayload>? SessionStarted;
+        public event EventHandler<Guid>? SessionEnded;
+#pragma warning restore CS0067
+
+        public List<(Guid SessionId, string? JoinCode)> JoinCalls { get; } = new();
+        public List<Guid> LeaveCalls { get; } = new();
+
+        public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
+        public Task StopAsync(CancellationToken ct = default) => Task.CompletedTask;
+        public Task JoinSessionAsync(Guid sessionId, string? joinCode, CancellationToken ct = default)
+        {
+            JoinCalls.Add((sessionId, joinCode));
+            return Task.CompletedTask;
+        }
+        public Task LeaveSessionAsync(Guid sessionId, CancellationToken ct = default)
+        {
+            LeaveCalls.Add(sessionId);
+            return Task.CompletedTask;
+        }
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class FakeUi : ISessionUiHost
+    {
+        private readonly TaskCompletionSource _shownSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private TaskCompletionSource<JoinDecision>? _pending;
+
+        public List<JoinConfirmation> Shown { get; } = new();
+        public bool Dismissed { get; private set; }
+        public JoinDecision NextDecision { get; set; } = JoinDecision.Confirmed;
+        public bool ManualResolve { get; set; }
+
+        public Task<JoinDecision> ShowJoinConfirmationAsync(JoinConfirmation confirmation, CancellationToken ct = default)
+        {
+            Shown.Add(confirmation);
+
+            if (ManualResolve)
+            {
+                _pending = new TaskCompletionSource<JoinDecision>(TaskCreationOptions.RunContinuationsAsynchronously);
+                confirmation.Finished += (_, d) => _pending.TrySetResult(d);
+                _shownSignal.TrySetResult();
+                return _pending.Task;
+            }
+
+            _shownSignal.TrySetResult();
+            return Task.FromResult(NextDecision);
+        }
+
+        public void DismissJoinConfirmation() => Dismissed = true;
+
+        public Task WaitForShownAsync() => _shownSignal.Task;
+
+        public void Resolve(JoinDecision decision) => _pending?.TrySetResult(decision);
+    }
+}

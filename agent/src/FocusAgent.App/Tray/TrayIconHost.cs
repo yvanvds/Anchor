@@ -1,5 +1,7 @@
+using FocusAgent.Core.Realtime;
 using H.NotifyIcon;
 using Microsoft.UI;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Windows.UI;
@@ -9,10 +11,22 @@ namespace FocusAgent.App.Tray;
 internal sealed class TrayIconHost : IDisposable
 {
     private readonly TaskbarIcon _icon;
+    private readonly MenuFlyoutItem _statusItem;
+    private readonly DispatcherQueue _dispatcher;
 
-    public TrayIconHost(Action onOpen, Action onQuit)
+    public TrayIconHost(Action onOpen, Action onQuit, DispatcherQueue dispatcher)
     {
+        _dispatcher = dispatcher;
         var menu = new MenuFlyout();
+
+        _statusItem = new MenuFlyoutItem
+        {
+            Text = "Signed out",
+            IsEnabled = false,
+        };
+        menu.Items.Add(_statusItem);
+
+        menu.Items.Add(new MenuFlyoutSeparator());
 
         menu.Items.Add(new MenuFlyoutItem
         {
@@ -42,6 +56,24 @@ internal sealed class TrayIconHost : IDisposable
     }
 
     public void Show() => _icon.ForceCreate();
+
+    public void UpdateStatus(AgentConnectionState state, string? displayName)
+    {
+        var text = state switch
+        {
+            AgentConnectionState.Connected when !string.IsNullOrWhiteSpace(displayName) => $"Connected as {displayName}",
+            AgentConnectionState.Connected => "Connected",
+            AgentConnectionState.Connecting => "Connecting…",
+            AgentConnectionState.Reconnecting => "Reconnecting…",
+            AgentConnectionState.Disconnected => "Disconnected",
+            _ => "Signed out",
+        };
+        _dispatcher.TryEnqueue(() =>
+        {
+            _statusItem.Text = text;
+            _icon.ToolTipText = $"FocusAgent — {text}";
+        });
+    }
 
     public void Dispose() => _icon.Dispose();
 }

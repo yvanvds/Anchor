@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="FocusAgent.App.Sessions.JoinConfirmationWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Padding="24" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <TextBlock x:Name="TitleText"
+                   Grid.Row="0"
+                   Text="Focus session starting"
+                   FontSize="20"
+                   FontWeight="SemiBold" />
+        <TextBlock x:Name="TeacherText"
+                   Grid.Row="1"
+                   Opacity="0.85" />
+        <TextBlock x:Name="CountdownText"
+                   Grid.Row="2"
+                   FontSize="32"
+                   FontWeight="SemiBold" />
+        <Button x:Name="CancelButton"
+                Grid.Row="3"
+                Content="Cancel"
+                HorizontalAlignment="Right"
+                Click="OnCancelClicked" />
+    </Grid>
+</Window>
