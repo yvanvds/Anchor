@@ -104,6 +104,12 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
     public Task LeaveSessionAsync(Guid sessionId, CancellationToken ct = default) =>
         _connection.InvokeAsync("LeaveSession", sessionId, ct);
 
+    public Task ReportEventAsync(Guid sessionId, string kind, string payloadJson, DateTimeOffset? occurredAt = null, CancellationToken ct = default) =>
+        _connection.InvokeAsync(
+            "ReportEvent",
+            new ReportEventRequest(sessionId, kind, payloadJson, occurredAt),
+            ct);
+
     private void StartHeartbeat()
     {
         StopHeartbeat();
@@ -151,4 +157,5 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
     }
 
     private sealed record JoinSessionRequest(Guid SessionId, string? JoinCode);
+    private sealed record ReportEventRequest(Guid SessionId, string Kind, string? PayloadJson, DateTimeOffset? OccurredAt);
 }

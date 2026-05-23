@@ -1,12 +1,15 @@
 using FocusAgent.App.Auth;
+using FocusAgent.App.Focus;
 using FocusAgent.App.Realtime;
 using FocusAgent.App.Sessions;
 using FocusAgent.App.Tray;
 using FocusAgent.Core.Auth;
+using FocusAgent.Core.Focus;
 using FocusAgent.Core.Logging;
 using FocusAgent.Core.Realtime;
 using FocusAgent.Core.Sessions;
 using FocusAgent.Core.Settings;
+using FocusAgent.Native;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -24,6 +27,7 @@ public partial class App : Application
     private MainWindow? _mainWindow;
     private TrayIconHost? _tray;
     private SessionCoordinator? _coordinator;
+    private FocusSessionController? _focus;
     private ISessionHubConnection? _hub;
 
     public App()
@@ -56,6 +60,7 @@ public partial class App : Application
 
             _hub = _host.Services.GetRequiredService<ISessionHubConnection>();
             _coordinator = _host.Services.GetRequiredService<SessionCoordinator>();
+            _focus = _host.Services.GetRequiredService<FocusSessionController>();
 
             _hub.StateChanged += (_, state) => _tray.UpdateStatus(state, LastDisplayName);
             _ = StartHubAsync(_host.Services, logger);
@@ -117,15 +122,27 @@ public partial class App : Application
             .Bind(builder.Configuration.GetSection(AuthSettings.SectionName));
         builder.Services.AddOptions<RealtimeSettings>()
             .Bind(builder.Configuration.GetSection(RealtimeSettings.SectionName));
+        builder.Services.AddOptions<SessionSettings>()
+            .Bind(builder.Configuration.GetSection(SessionSettings.SectionName));
 
         builder.Services.AddSingleton(dispatcher);
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<Func<IntPtr>>(_ => windowHandleProvider);
+        // Capture the UI thread's SynchronizationContext so the foreground
+        // watcher can marshal native callbacks onto it.
+        builder.Services.AddSingleton(SynchronizationContext.Current
+            ?? new DispatcherQueueSynchronizationContext(dispatcher));
 
         builder.Services.AddSingleton<IAuthTokenProvider, WamTokenProvider>();
         builder.Services.AddSingleton<ISessionHubConnection, SignalRSessionHubConnection>();
         builder.Services.AddSingleton<ISessionUiHost, WinUiSessionUiHost>();
         builder.Services.AddSingleton<SessionCoordinator>();
+
+        builder.Services.AddSingleton<IAppIdentifier, AppIdentifier>();
+        builder.Services.AddSingleton<IForegroundWatcher, ForegroundWatcher>();
+        builder.Services.AddSingleton<IFocusEnforcer, FocusEnforcer>();
+        builder.Services.AddSingleton<IFocusEventReporter, SignalRFocusEventReporter>();
+        builder.Services.AddSingleton<FocusSessionController>();
 
         var logDir = AgentLogPaths.LocalAppDataLogDirectory();
         Directory.CreateDirectory(logDir);
