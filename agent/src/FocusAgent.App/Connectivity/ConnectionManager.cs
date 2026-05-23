@@ -1,6 +1,8 @@
 using FocusAgent.Core.Auth;
 using FocusAgent.Core.Realtime;
+using FocusAgent.Core.Settings;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Microsoft.Identity.Client;
 
 namespace FocusAgent.App.Connectivity;
@@ -29,6 +31,7 @@ public sealed class ConnectionManager : IAsyncDisposable
     private readonly IAuthTokenProvider _tokens;
     private readonly ISessionHubConnection _hub;
     private readonly ILogger<ConnectionManager> _log;
+    private readonly string _backendBaseUrl;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     private ConnectionStatus _statusKind = ConnectionStatus.Idle;
@@ -39,10 +42,12 @@ public sealed class ConnectionManager : IAsyncDisposable
     public ConnectionManager(
         IAuthTokenProvider tokens,
         ISessionHubConnection hub,
+        IOptions<BackendSettings> backend,
         ILogger<ConnectionManager> log)
     {
         _tokens = tokens;
         _hub = hub;
+        _backendBaseUrl = backend.Value.BaseUrl;
         _log = log;
 
         // Mirror SignalR's protocol-level state into ours so a transient drop
@@ -198,9 +203,9 @@ public sealed class ConnectionManager : IAsyncDisposable
         _ => "Sign-in failed. Click Sign in to try again.",
     };
 
-    private static string DescribeConnectFailure(Exception ex) => ex switch
+    private string DescribeConnectFailure(Exception ex) => ex switch
     {
-        System.Net.Http.HttpRequestException => "Can't reach the backend. Retrying…",
+        System.Net.Http.HttpRequestException => $"Can't reach the backend at {_backendBaseUrl}. Retrying…",
         _ => $"Connection failed: {ex.Message}. Retrying…",
     };
 
