@@ -142,7 +142,7 @@ needed.
 Logs roll daily into `%LOCALAPPDATA%\Anchor\FocusAgent\logs\focusagent-*.log`
 (14-day retention) via Serilog, plus debug output during development. When
 running packaged (MSIX), `LocalApplicationData` resolves to
-`%LOCALAPPDATA%\Packages\net.attr-x.anchor.focusagent_<hash>\LocalCache\Local`
+`%LOCALAPPDATA%\Packages\net.arcadia.anchor.focusagent_<hash>\LocalCache\Local`
 — same code path, sandboxed location.
 
 ## Watchdog (anti-tamper supervisor)
@@ -212,7 +212,7 @@ You sign it manually with the dev cert described below before installing.
 # Subject MUST match Package.appxmanifest <Identity Publisher="..."> exactly.
 $cert = New-SelfSignedCertificate `
   -Type CodeSigningCert `
-  -Subject 'CN=Attr-X' `
+  -Subject 'CN=Arcadia' `
   -KeyUsage DigitalSignature `
   -FriendlyName 'Anchor FocusAgent Dev Signing' `
   -CertStoreLocation 'Cert:\CurrentUser\My' `
@@ -226,14 +226,19 @@ Import-Certificate -FilePath agent/artifacts/anchor-dev.cer `
   -CertStoreLocation Cert:\LocalMachine\TrustedPeople
 ```
 
-Then sign each freshly built MSIX:
+Then sign each freshly built MSIX with `signtool` from the Windows SDK
+(`Set-AuthenticodeSignature` does **not** support .msix — it returns
+"SIP_SUBJECTINFO structure didn't contain the required data"):
 
 ```powershell
-$msix = Get-ChildItem agent/artifacts/*.msix | Select-Object -First 1
+$signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' `
+  | Sort-Object -Descending FullName | Select-Object -First 1
+$msix = Get-ChildItem agent/artifacts -Recurse -Filter '*.msix' | Select-Object -First 1
 $cert = Get-ChildItem Cert:\CurrentUser\My |
-  Where-Object Subject -eq 'CN=Attr-X' | Select-Object -First 1
-Set-AuthenticodeSignature -FilePath $msix.FullName -Certificate $cert `
-  -HashAlgorithm SHA256
+  Where-Object Subject -eq 'CN=Arcadia' | Select-Object -First 1
+& $signtool.FullName sign /fd SHA256 /sha1 $cert.Thumbprint $msix.FullName
+# Optional once the cert is trusted (see above): confirm the chain validates
+& $signtool.FullName verify /pa $msix.FullName
 ```
 
 `.pfx`/`.cer` files are gitignored at the repo root; never commit them.
