@@ -9,9 +9,22 @@ public static class DevDataSeeder
     private static readonly Guid TeacherEntraOid = Guid.Parse("11111111-1111-1111-1111-111111111111");
     private static readonly Guid StudentEntraOid = Guid.Parse("22222222-2222-2222-2222-222222222222");
 
+    /// <summary>
+    /// Dev student who is NOT enrolled in any class. Exists so the manual
+    /// join-by-code path (#34) can be verified end-to-end: a rostered student
+    /// would receive the original SessionStarted push from the class roster
+    /// and we'd be unable to tell whether the manual REST call or the roster
+    /// got them there.
+    /// </summary>
+    public static readonly Guid OutsiderStudentEntraOid = Guid.Parse("33333333-3333-3333-3333-333333333333");
+
     public static async Task SeedAsync(AnchorDbContext db, CancellationToken cancellationToken = default)
     {
-        if (await db.Users.AnyAsync(cancellationToken)) return;
+        // The main seed is one-shot — early-return so we don't churn classes
+        // / memberships on every restart. The outsider student is bolted on
+        // below idempotently so dev DBs created before #34 still pick it up.
+        await EnsureDevOutsiderStudentAsync(db, cancellationToken);
+        if (await db.Users.AnyAsync(u => u.EntraOid != OutsiderStudentEntraOid, cancellationToken)) return;
 
         var teacher = new User
         {
@@ -49,6 +62,25 @@ public static class DevDataSeeder
         db.Classes.Add(klas);
         db.ClassMemberships.AddRange(teacherMembership, studentMembership);
 
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Idempotently inserts the outsider student (see <see cref="OutsiderStudentEntraOid"/>)
+    /// if not already present. Intentionally not enrolled in any class —
+    /// that's what makes them an outsider for the join-by-code verification.
+    /// </summary>
+    public static async Task EnsureDevOutsiderStudentAsync(AnchorDbContext db, CancellationToken cancellationToken = default)
+    {
+        var exists = await db.Users.AnyAsync(u => u.EntraOid == OutsiderStudentEntraOid, cancellationToken);
+        if (exists) return;
+
+        db.Users.Add(new User
+        {
+            EntraOid = OutsiderStudentEntraOid,
+            DisplayName = "Dev Outsider",
+            Role = UserRole.Student,
+        });
         await db.SaveChangesAsync(cancellationToken);
     }
 

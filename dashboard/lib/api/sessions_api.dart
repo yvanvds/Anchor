@@ -63,6 +63,31 @@ class MeResponse {
   );
 }
 
+class SessionDetail {
+  SessionDetail({
+    required this.id,
+    required this.classId,
+    required this.joinCode,
+    required this.startedAt,
+    required this.endedAt,
+  });
+  final String id;
+  final String classId;
+  final String joinCode;
+  final DateTime startedAt;
+  final DateTime? endedAt;
+
+  factory SessionDetail.fromJson(Map<String, dynamic> json) => SessionDetail(
+    id: json['id'] as String,
+    classId: json['classId'] as String,
+    joinCode: json['joinCode'] as String? ?? '',
+    startedAt: DateTime.parse(json['startedAt'] as String),
+    endedAt: json['endedAt'] == null
+        ? null
+        : DateTime.parse(json['endedAt'] as String),
+  );
+}
+
 class SessionsApi {
   SessionsApi(this._client);
   final ApiClient _client;
@@ -71,6 +96,14 @@ class SessionsApi {
     final res = await _client.get('me');
     _ensureOk(res);
     return MeResponse.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+  }
+
+  Future<SessionDetail> getSession(String sessionId) async {
+    final res = await _client.get('sessions/$sessionId');
+    _ensureOk(res);
+    return SessionDetail.fromJson(
+      jsonDecode(res.body) as Map<String, dynamic>,
+    );
   }
 
   Future<List<ClassSummary>> classes() async {

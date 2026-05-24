@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="FocusAgent.App.Sessions.JoinByCodeWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Padding="24"
+          RowSpacing="14"
+          Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0"
+                   Text="Join session by code"
+                   FontSize="20"
+                   FontWeight="SemiBold" />
+
+        <TextBlock Grid.Row="1"
+                   Opacity="0.85"
+                   TextWrapping="Wrap"
+                   Text="Enter the 6-digit code shown on your teacher's dashboard." />
+
+        <TextBox x:Name="CodeBox"
+                 Grid.Row="2"
+                 MaxLength="6"
+                 FontSize="28"
+                 FontFamily="Consolas"
+                 PlaceholderText="000000"
+                 TextAlignment="Center"
+                 BeforeTextChanging="OnCodeBeforeTextChanging"
+                 TextChanged="OnCodeTextChanged"
+                 KeyDown="OnCodeKeyDown" />
+
+        <TextBlock x:Name="MessageText"
+                   Grid.Row="3"
+                   TextWrapping="Wrap"
+                   Visibility="Collapsed"
+                   Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
+
+        <StackPanel Grid.Row="4"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Spacing="8">
+            <Button x:Name="CancelButton"
+                    Content="Cancel"
+                    MinWidth="88"
+                    Click="OnCancelClicked" />
+            <Button x:Name="JoinButton"
+                    Content="Join"
+                    Style="{ThemeResource AccentButtonStyle}"
+                    MinWidth="88"
+                    IsEnabled="False"
+                    Click="OnJoinClicked" />
+        </StackPanel>
+    </Grid>
+</Window>

@@ -37,6 +37,7 @@ public partial class App : Application
     private ISessionHubConnection? _hub;
     private ConnectionManager? _connection;
     private StatusEndpoint? _statusEndpoint;
+    private JoinByCodeFlow? _joinByCodeFlow;
     // Held only by the --show-test-toast path so the logger outlives the
     // async show/decide chain rather than getting disposed at OnLaunched return.
     private ILoggerFactory? _testLoggerFactory;
@@ -92,8 +93,14 @@ public partial class App : Application
                 _heartbeat,
                 _host.Services.GetRequiredService<IOptions<SessionSettings>>(),
                 onQuit: Exit);
+            _joinByCodeFlow = _host.Services.GetRequiredService<JoinByCodeFlow>();
             _tray = new TrayIconHost(
                 onOpen: () => ShowMainWindow(),
+                onJoinByCode: () => _joinByCodeFlow.Open(),
+                // Per #34: the menu item is disabled while the agent is
+                // already in (or being walked into) a session — no point
+                // letting the student type a code they can't act on.
+                canJoinByCode: () => _coordinator.ActiveSessionId is null && _coordinator.JoinedSessionId is null,
                 onQuit: () => Exit(),
                 dispatcher: dispatcher);
             _tray.Show();
@@ -347,6 +354,9 @@ public partial class App : Application
         // that fans backend results into SessionCoordinator.RejoinAsync.
         builder.Services.AddHttpClient<ISessionRehydrationClient, HttpSessionRehydrationClient>();
         builder.Services.AddSingleton<SessionRehydrationService>();
+        // #34 -- manual join-by-code: REST client + dialog flow host.
+        builder.Services.AddHttpClient<IJoinByCodeClient, HttpJoinByCodeClient>();
+        builder.Services.AddSingleton<JoinByCodeFlow>();
         builder.Services.AddSingleton<ConnectionManager>();
 
         builder.Services.AddSingleton<IAppIdentifier, AppIdentifier>();

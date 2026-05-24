@@ -12,11 +12,19 @@ internal sealed class TrayIconHost : IDisposable
 {
     private readonly TaskbarIcon _icon;
     private readonly MenuFlyoutItem _statusItem;
+    private readonly MenuFlyoutItem _joinByCodeItem;
+    private readonly Func<bool> _canJoinByCode;
     private readonly DispatcherQueue _dispatcher;
 
-    public TrayIconHost(Action onOpen, Action onQuit, DispatcherQueue dispatcher)
+    public TrayIconHost(
+        Action onOpen,
+        Action onJoinByCode,
+        Func<bool> canJoinByCode,
+        Action onQuit,
+        DispatcherQueue dispatcher)
     {
         _dispatcher = dispatcher;
+        _canJoinByCode = canJoinByCode;
         var menu = new MenuFlyout();
 
         _statusItem = new MenuFlyoutItem
@@ -34,6 +42,13 @@ internal sealed class TrayIconHost : IDisposable
             Command = new RelayCommand(onOpen),
         });
 
+        _joinByCodeItem = new MenuFlyoutItem
+        {
+            Text = "Join session by code…",
+            Command = new RelayCommand(onJoinByCode),
+        };
+        menu.Items.Add(_joinByCodeItem);
+
         menu.Items.Add(new MenuFlyoutSeparator());
 
         menu.Items.Add(new MenuFlyoutItem
@@ -41,6 +56,11 @@ internal sealed class TrayIconHost : IDisposable
             Text = "Quit",
             Command = new RelayCommand(onQuit),
         });
+
+        // Recompute Join-by-code's enabled state every time the menu opens
+        // rather than threading SessionCoordinator events through here — it's
+        // a one-shot read at exactly the moment the user is looking at it.
+        menu.Opening += (_, _) => _joinByCodeItem.IsEnabled = _canJoinByCode();
 
         _icon = new TaskbarIcon
         {

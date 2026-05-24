@@ -1,6 +1,7 @@
 using Anchor.Api;
 using Anchor.Api.Auth;
 using Anchor.Api.Realtime;
+using Anchor.Api.Sessions;
 using Anchor.Infrastructure;
 using Anchor.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication;
@@ -89,6 +90,7 @@ if (!builder.Environment.IsEnvironment("Test"))
 }
 
 builder.Services.AddSignalR();
+builder.Services.AddSingleton<JoinByCodeRateLimiter>();
 builder.Services.AddSingleton<ISessionBroadcaster, SessionBroadcaster>();
 builder.Services.AddSingleton<HeartbeatTracker>();
 builder.Services.Configure<HeartbeatOptions>(builder.Configuration.GetSection(HeartbeatOptions.SectionName));
