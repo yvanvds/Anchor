@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using System.Runtime.Versioning;
 using System.Text;
 using FocusAgent.Core.Focus;
@@ -50,6 +51,18 @@ public sealed class ForegroundWatcher : IForegroundWatcher
     public void Start()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        // SetWinEventHook with WINEVENT_OUTOFCONTEXT delivers callbacks via the
+        // registering thread's message queue. SessionJoined fires on a SignalR
+        // worker after async-void continuations land in the thread pool, so
+        // registering inline would silently no-op (issue #64). Marshal to the
+        // captured UI sync context so the hook is owned by a pumping thread.
+        RunOnSyncContext(StartCore);
+    }
+
+    public void Stop() => RunOnSyncContext(StopCore);
+
+    private void StartCore()
+    {
         lock (_gate)
         {
             if (_hook != IntPtr.Zero)
@@ -64,14 +77,18 @@ public sealed class ForegroundWatcher : IForegroundWatcher
                 NativeMethods.WINEVENT_OUTOFCONTEXT | NativeMethods.WINEVENT_SKIPOWNPROCESS);
             if (_hook == IntPtr.Zero)
             {
-                _log.LogError("SetWinEventHook returned NULL");
+                _log.LogError(
+                    "SetWinEventHook returned NULL on thread {ThreadId}",
+                    Environment.CurrentManagedThreadId);
                 return;
             }
-            _log.LogInformation("ForegroundWatcher started (hook=0x{Hook:X})", _hook);
+            _log.LogInformation(
+                "ForegroundWatcher started (hook=0x{Hook:X} thread={ThreadId})",
+                _hook, Environment.CurrentManagedThreadId);
         }
     }
 
-    public void Stop()
+    private void StopCore()
     {
         nint hook;
         lock (_gate)
@@ -82,10 +99,41 @@ public sealed class ForegroundWatcher : IForegroundWatcher
         if (hook != IntPtr.Zero)
         {
             if (!NativeMethods.UnhookWinEvent(hook))
-                _log.LogWarning("UnhookWinEvent returned false (hook=0x{Hook:X})", hook);
+                _log.LogWarning(
+                    "UnhookWinEvent returned false (hook=0x{Hook:X} thread={ThreadId})",
+                    hook, Environment.CurrentManagedThreadId);
             else
-                _log.LogInformation("ForegroundWatcher stopped");
+                _log.LogInformation(
+                    "ForegroundWatcher stopped (thread={ThreadId})",
+                    Environment.CurrentManagedThreadId);
         }
+    }
+
+    private void RunOnSyncContext(Action action)
+    {
+        if (_syncContext is null || ReferenceEquals(SynchronizationContext.Current, _syncContext))
+        {
+            action();
+            return;
+        }
+        _log.LogDebug(
+            "ForegroundWatcher: marshaling {Action} from thread {CallingThreadId} onto captured SynchronizationContext",
+            action.Method.Name, Environment.CurrentManagedThreadId);
+
+        // WinUI 3's DispatcherQueueSynchronizationContext refuses Send (throws
+        // NotSupportedException) — emulate synchronous semantics with Post +
+        // ManualResetEventSlim so Start/Stop stay synchronous to the caller
+        // while the hook is owned by the pumping UI thread.
+        using var done = new ManualResetEventSlim(false);
+        ExceptionDispatchInfo? captured = null;
+        _syncContext.Post(_ =>
+        {
+            try { action(); }
+            catch (Exception ex) { captured = ExceptionDispatchInfo.Capture(ex); }
+            finally { done.Set(); }
+        }, state: null);
+        done.Wait();
+        captured?.Throw();
     }
 
     public void Dispose()
@@ -97,6 +145,12 @@ public sealed class ForegroundWatcher : IForegroundWatcher
 
     private void OnWinEvent(nint hWinEventHook, uint eventType, nint hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime)
     {
+        // Logged before any filter so a silent watcher (issue #64) is
+        // distinguishable from "callback fires but every event is filtered."
+        _log.LogTrace(
+            "OnWinEvent: event=0x{EventType:X} hwnd=0x{Hwnd:X} obj={IdObject} child={IdChild} thread={ThreadId}",
+            eventType, hwnd, idObject, idChild, Environment.CurrentManagedThreadId);
+
         // OBJID_WINDOW = 0; ignore child-object foreground notifications.
         if (idObject != 0 || idChild != 0 || hwnd == IntPtr.Zero)
             return;
