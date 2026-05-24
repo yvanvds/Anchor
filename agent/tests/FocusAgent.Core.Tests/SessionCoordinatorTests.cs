@@ -16,7 +16,8 @@ public class SessionCoordinatorTests
             StartedAt: DateTimeOffset.UnixEpoch,
             JoinCode: "123456",
             Apps: Array.Empty<AllowedAppDto>(),
-            Domains: Array.Empty<AllowedDomainDto>());
+            Domains: Array.Empty<AllowedDomainDto>(),
+            BlockedDomains: Array.Empty<BlockedDomainDto>());
 
     [Fact]
     public async Task Confirmed_decision_calls_JoinSession_with_null_join_code()

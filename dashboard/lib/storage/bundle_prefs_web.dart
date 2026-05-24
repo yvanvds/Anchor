@@ -10,7 +10,8 @@ external JSObject get window;
 class BundlePrefsImpl implements BundlePrefs {
   BundlePrefsImpl();
 
-  static const String _keyPrefix = 'anchor.bundles.selection.';
+  static const String _selectionKeyPrefix = 'anchor.bundles.selection.';
+  static const String _modeKeyPrefix = 'anchor.session.mode.';
 
   JSObject? get _storage {
     final raw = window['localStorage'];
@@ -18,13 +19,14 @@ class BundlePrefsImpl implements BundlePrefs {
     return raw as JSObject;
   }
 
-  String _key(String accountKey) => '$_keyPrefix$accountKey';
+  String _selectionKey(String accountKey) => '$_selectionKeyPrefix$accountKey';
+  String _modeKey(String accountKey) => '$_modeKeyPrefix$accountKey';
 
   @override
   List<String>? readSelection(String accountKey) {
     final storage = _storage;
     if (storage == null) return null;
-    final raw = storage.callMethod('getItem'.toJS, _key(accountKey).toJS);
+    final raw = storage.callMethod('getItem'.toJS, _selectionKey(accountKey).toJS);
     if (raw == null || !raw.isA<JSString>()) return null;
     final json = (raw as JSString).toDart;
     try {
@@ -42,8 +44,28 @@ class BundlePrefsImpl implements BundlePrefs {
     if (storage == null) return;
     storage.callMethod(
       'setItem'.toJS,
-      _key(accountKey).toJS,
+      _selectionKey(accountKey).toJS,
       jsonEncode(bundleIds).toJS,
+    );
+  }
+
+  @override
+  String? readMode(String accountKey) {
+    final storage = _storage;
+    if (storage == null) return null;
+    final raw = storage.callMethod('getItem'.toJS, _modeKey(accountKey).toJS);
+    if (raw == null || !raw.isA<JSString>()) return null;
+    return (raw as JSString).toDart;
+  }
+
+  @override
+  void writeMode(String accountKey, String mode) {
+    final storage = _storage;
+    if (storage == null) return;
+    storage.callMethod(
+      'setItem'.toJS,
+      _modeKey(accountKey).toJS,
+      mode.toJS,
     );
   }
 }

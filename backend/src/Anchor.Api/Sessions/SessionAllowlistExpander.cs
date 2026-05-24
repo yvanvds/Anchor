@@ -1,38 +1,50 @@
 using Anchor.Api.Realtime;
 using Anchor.Domain.Bundles;
+using Anchor.Domain.Sessions;
 using Anchor.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
 namespace Anchor.Api.Sessions;
 
 /// <summary>
-/// Turns the set of selected bundle ids into the concrete (apps, domains)
-/// lists the agent will enforce against. Merges the bundle entries with
-/// <see cref="SessionAllowlist"/>'s baseline and dedupes on
-/// (match-kind, lowercase value) so a bundle that repeats a baseline entry
-/// doesn't double-list it. #70.
+/// Turns the set of selected bundle ids + the session's mode into the
+/// concrete wire payload the agent and extension will enforce against.
+///
+/// In <see cref="SessionMode.Strict"/> the expansion is bundles merged with
+/// the baseline allowlist (apps + domains), and an empty blocklist (#70).
+/// In <see cref="SessionMode.Loose"/> the allowed-domain side is still
+/// baseline + any explicitly picked bundles (a teacher who picked loose AND
+/// a bundle should not get the bundle silently dropped), and the blocked
+/// side carries the curated "known-bad categories" list from
+/// <see cref="ILooseModeBlocklistProvider"/> (#76).
+///
+/// Dedupes on (match-kind, lowercase value) within each list so a bundle
+/// that repeats a baseline entry doesn't double-list it.
 /// </summary>
 public interface ISessionAllowlistExpander
 {
-    Task<ExpandedAllowlist> ExpandAsync(IReadOnlyCollection<Guid> bundleIds, CancellationToken cancellationToken = default);
+    Task<ExpandedAllowlist> ExpandAsync(IReadOnlyCollection<Guid> bundleIds, SessionMode mode, CancellationToken cancellationToken = default);
 
-    Task<ExpandedAllowlist> ExpandForSessionAsync(Guid sessionId, CancellationToken cancellationToken = default);
+    Task<ExpandedAllowlist> ExpandForSessionAsync(Guid sessionId, SessionMode mode, CancellationToken cancellationToken = default);
 }
 
 public sealed record ExpandedAllowlist(
     IReadOnlyList<AllowedAppDto> Apps,
-    IReadOnlyList<AllowedDomainDto> Domains);
+    IReadOnlyList<AllowedDomainDto> Domains,
+    IReadOnlyList<BlockedDomainDto> BlockedDomains);
 
 public sealed class SessionAllowlistExpander : ISessionAllowlistExpander
 {
     private readonly AnchorDbContext _db;
+    private readonly ILooseModeBlocklistProvider _blocklist;
 
-    public SessionAllowlistExpander(AnchorDbContext db)
+    public SessionAllowlistExpander(AnchorDbContext db, ILooseModeBlocklistProvider blocklist)
     {
         _db = db;
+        _blocklist = blocklist;
     }
 
-    public async Task<ExpandedAllowlist> ExpandAsync(IReadOnlyCollection<Guid> bundleIds, CancellationToken cancellationToken = default)
+    public async Task<ExpandedAllowlist> ExpandAsync(IReadOnlyCollection<Guid> bundleIds, SessionMode mode, CancellationToken cancellationToken = default)
     {
         var entries = bundleIds.Count == 0
             ? Array.Empty<BundleEntry>()
@@ -41,10 +53,10 @@ public sealed class SessionAllowlistExpander : ISessionAllowlistExpander
                 .Where(e => bundleIds.Contains(e.BundleId))
                 .ToArrayAsync(cancellationToken);
 
-        return Merge(entries);
+        return Merge(entries, mode);
     }
 
-    public async Task<ExpandedAllowlist> ExpandForSessionAsync(Guid sessionId, CancellationToken cancellationToken = default)
+    public async Task<ExpandedAllowlist> ExpandForSessionAsync(Guid sessionId, SessionMode mode, CancellationToken cancellationToken = default)
     {
         var entries = await _db.SessionBundles
             .AsNoTracking()
@@ -52,10 +64,10 @@ public sealed class SessionAllowlistExpander : ISessionAllowlistExpander
             .SelectMany(sb => _db.BundleEntries.Where(e => e.BundleId == sb.BundleId))
             .ToArrayAsync(cancellationToken);
 
-        return Merge(entries);
+        return Merge(entries, mode);
     }
 
-    private static ExpandedAllowlist Merge(IReadOnlyCollection<BundleEntry> entries)
+    private ExpandedAllowlist Merge(IReadOnlyCollection<BundleEntry> entries, SessionMode mode)
     {
         var apps = new List<AllowedAppDto>(SessionAllowlist.BaselineApps);
         var domains = new List<AllowedDomainDto>(SessionAllowlist.BaselineDomains);
@@ -78,9 +90,14 @@ public sealed class SessionAllowlistExpander : ISessionAllowlistExpander
             }
         }
 
+        var blocked = mode == SessionMode.Loose
+            ? DedupeBlocked(_blocklist.GetBlocklist())
+            : Array.Empty<BlockedDomainDto>();
+
         return new ExpandedAllowlist(
             DedupeApps(apps),
-            DedupeDomains(domains));
+            DedupeDomains(domains),
+            blocked);
     }
 
     private static string? MapAppMatchKind(BundleEntryMatchType matchType) => matchType switch
@@ -120,6 +137,20 @@ public sealed class SessionAllowlistExpander : ISessionAllowlistExpander
     {
         var seen = new HashSet<(string, string)>();
         var result = new List<AllowedDomainDto>();
+        foreach (var dto in source)
+        {
+            if (string.IsNullOrWhiteSpace(dto.Value)) continue;
+            var key = (dto.MatchType, dto.Value.Trim().ToLowerInvariant());
+            if (seen.Add(key))
+                result.Add(dto);
+        }
+        return result;
+    }
+
+    private static IReadOnlyList<BlockedDomainDto> DedupeBlocked(IEnumerable<BlockedDomainDto> source)
+    {
+        var seen = new HashSet<(string, string)>();
+        var result = new List<BlockedDomainDto>();
         foreach (var dto in source)
         {
             if (string.IsNullOrWhiteSpace(dto.Value)) continue;

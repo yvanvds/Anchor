@@ -1,4 +1,5 @@
 using Anchor.Api.Realtime;
+using Anchor.Api.Sessions;
 using Anchor.Api.Tests.FakeAuth;
 using Anchor.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication;
@@ -30,6 +31,13 @@ public class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     }
 
     protected virtual string EnvironmentName => "Test";
+
+    /// <summary>
+    /// Stub loose-mode blocklist used by the API factory. Tests that exercise
+    /// loose-mode payload shape mutate this directly before issuing the
+    /// session-start request.
+    /// </summary>
+    public StubLooseModeBlocklistProvider BlocklistOverride { get; } = new();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -73,6 +81,13 @@ public class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             services.RemoveAll<ISessionBroadcaster>();
             services.AddSingleton<RecordingSessionBroadcaster>();
             services.AddSingleton<ISessionBroadcaster>(sp => sp.GetRequiredService<RecordingSessionBroadcaster>());
+
+            // Replace the file-loading provider (#76). The shipped JSON isn't
+            // copied to the test bin and the production loader would fail at
+            // startup. Tests that care about loose-mode payload contents seed
+            // entries here; the rest get an empty list and are unaffected.
+            services.RemoveAll<ILooseModeBlocklistProvider>();
+            services.AddSingleton<ILooseModeBlocklistProvider>(_ => BlocklistOverride);
         });
     }
 

@@ -7,4 +7,5 @@ public sealed record SessionStartedPayload(
     DateTimeOffset StartedAt,
     string JoinCode,
     IReadOnlyList<AllowedAppDto> Apps,
-    IReadOnlyList<AllowedDomainDto> Domains);
+    IReadOnlyList<AllowedDomainDto> Domains,
+    IReadOnlyList<BlockedDomainDto> BlockedDomains);

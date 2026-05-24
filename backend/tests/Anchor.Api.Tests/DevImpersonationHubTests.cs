@@ -132,7 +132,8 @@ public sealed class DevImpersonationHubTests : IClassFixture<DevImpersonationHub
         StartedAt: DateTimeOffset.UtcNow,
         JoinCode: "654321",
         Apps: Array.Empty<AllowedAppDto>(),
-        Domains: Array.Empty<AllowedDomainDto>());
+        Domains: Array.Empty<AllowedDomainDto>(),
+        BlockedDomains: Array.Empty<BlockedDomainDto>());
 
     public sealed class DevAnchorApiFactory : AnchorApiFactory
     {
