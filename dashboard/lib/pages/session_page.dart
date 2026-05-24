@@ -55,7 +55,13 @@ class _SessionPageState extends State<SessionPage> {
     try {
       final detail = await widget.sessions.getSession(widget.sessionId);
       if (!mounted) return;
-      setState(() => _detail = detail);
+      setState(() {
+        _detail = detail;
+        // Navigating to an already-ended session never triggers a SessionEnded
+        // broadcast, so seed _ended from persisted state. Without this the
+        // summary panel only ever renders during the live-end transition.
+        if (detail.endedAt != null) _ended = true;
+      });
     } catch (_) {
       // Non-fatal: the live event stream still works without the detail block.
       // The join-code panel just won't render.
