@@ -54,6 +54,12 @@ public partial class App : Application
             return;
         }
 
+        if (Program.ShowTestOverlay)
+        {
+            RunOverlaySelfTest();
+            return;
+        }
+
         try
         {
             var dispatcher = DispatcherQueue.GetForCurrentThread();
@@ -227,6 +233,56 @@ public partial class App : Application
         });
     }
 
+    /// <summary>
+    /// Dev-only path: render the focus-enforcement overlay against a synthetic
+    /// rules list with no host bootstrap, then exit after a buffer so
+    /// scripts/dev/verify-overlay.ps1 can screenshot it. See Program.cs.
+    /// </summary>
+    private void RunOverlaySelfTest()
+    {
+        var dispatcher = DispatcherQueue.GetForCurrentThread();
+        var logDir = AgentLogPaths.LocalAppDataLogDirectory();
+        Directory.CreateDirectory(logDir);
+        var serilog = new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.File(
+                path: Path.Combine(logDir, "focusagent-overlaytest-.log"),
+                rollingInterval: RollingInterval.Day,
+                retainedFileCountLimit: 3,
+                outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}")
+            .CreateLogger();
+        _testLoggerFactory = LoggerFactory.Create(b => b.AddSerilog(serilog, dispose: true));
+        var log = _testLoggerFactory.CreateLogger<App>();
+        log.LogInformation("--show-test-overlay: starting overlay self-test");
+
+        var identifier = new AppIdentifier();
+        var overlay = new WinUiFocusOverlay(
+            dispatcher,
+            identifier,
+            _testLoggerFactory.CreateLogger<WinUiFocusOverlay>());
+
+        var rules = new List<AllowedAppRule>
+        {
+            new() { MatchKind = AllowedAppMatchKind.ProcessName, Value = "winword" },
+            new() { MatchKind = AllowedAppMatchKind.ProcessName, Value = "powerpnt" },
+            new() { MatchKind = AllowedAppMatchKind.ExecutablePath, Value = @"C:\Program Files\GeoGebra\GeoGebra.exe" },
+            new() { MatchKind = AllowedAppMatchKind.Publisher, Value = "International GeoGebra Institute" },
+        };
+
+        overlay.Show(rules, blockedAppName: "notepad");
+
+        // Hold for ~5s so the verify script has time to find the HWND, settle,
+        // and capture. Then close cleanly (clears HWND_TOPMOST per AC) and exit.
+        _ = Task.Delay(TimeSpan.FromSeconds(5)).ContinueWith(_ =>
+        {
+            dispatcher.TryEnqueue(() =>
+            {
+                overlay.Close();
+                Exit();
+            });
+        });
+    }
+
     private static void WriteStartupFailure(Exception ex)
     {
         try
@@ -297,6 +353,7 @@ public partial class App : Application
         builder.Services.AddSingleton<IForegroundWatcher, ForegroundWatcher>();
         builder.Services.AddSingleton<IFocusEnforcer, FocusEnforcer>();
         builder.Services.AddSingleton<IFocusEventReporter, SignalRFocusEventReporter>();
+        builder.Services.AddSingleton<IFocusOverlay, WinUiFocusOverlay>();
         builder.Services.AddSingleton<FocusSessionController>();
 
         var logDir = AgentLogPaths.LocalAppDataLogDirectory();

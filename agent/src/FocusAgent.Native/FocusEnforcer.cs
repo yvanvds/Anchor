@@ -31,9 +31,9 @@ public sealed class FocusEnforcer : IFocusEnforcer
             _lastAllowed = windowHandle;
     }
 
-    public void Block(nint offendingWindowHandle)
+    public bool Block(nint offendingWindowHandle)
     {
-        if (offendingWindowHandle == IntPtr.Zero) return;
+        if (offendingWindowHandle == IntPtr.Zero) return false;
 
         try
         {
@@ -52,16 +52,18 @@ public sealed class FocusEnforcer : IFocusEnforcer
         if (target == IntPtr.Zero || target == offendingWindowHandle || !NativeMethods.IsWindow(target))
         {
             _log.LogDebug("Block: no valid prior allowed window to restore");
-            return;
+            return false;
         }
 
         try
         {
             ForceForeground(target);
+            return true;
         }
         catch (Exception ex)
         {
             _log.LogError(ex, "ForceForeground threw for 0x{Hwnd:X}", target);
+            return false;
         }
     }
 

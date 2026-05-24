@@ -19,6 +19,7 @@ public sealed class FocusSessionController : IAsyncDisposable
     private readonly IForegroundWatcher _watcher;
     private readonly IFocusEnforcer _enforcer;
     private readonly IFocusEventReporter _reporter;
+    private readonly IFocusOverlay _overlay;
     private readonly SessionSettings _settings;
     private readonly TimeProvider _clock;
     private readonly ILogger<FocusSessionController> _log;
@@ -34,6 +35,7 @@ public sealed class FocusSessionController : IAsyncDisposable
         IForegroundWatcher watcher,
         IFocusEnforcer enforcer,
         IFocusEventReporter reporter,
+        IFocusOverlay overlay,
         IOptions<SessionSettings> settings,
         TimeProvider? clock = null,
         ILogger<FocusSessionController>? log = null)
@@ -42,6 +44,7 @@ public sealed class FocusSessionController : IAsyncDisposable
         _watcher = watcher;
         _enforcer = enforcer;
         _reporter = reporter;
+        _overlay = overlay;
         _settings = settings.Value;
         _clock = clock ?? TimeProvider.System;
         _log = log ?? NullLogger<FocusSessionController>.Instance;
@@ -94,6 +97,8 @@ public sealed class FocusSessionController : IAsyncDisposable
             }
             _watcher.Stop();
             _enforcer.Reset();
+            try { _overlay.Close(); }
+            catch (Exception ex) { _log.LogWarning(ex, "Overlay.Close threw on session-left"); }
             _log.LogInformation("Focus enforcement stopped for session {SessionId}", sessionId);
         }
         catch (Exception ex)
@@ -137,13 +142,23 @@ public sealed class FocusSessionController : IAsyncDisposable
             if (allowed)
             {
                 _enforcer.RememberAllowed(change.WindowHandle);
+                try { _overlay.Hide(); }
+                catch (Exception ex) { _log.LogWarning(ex, "Overlay.Hide threw"); }
             }
             else
             {
                 _log.LogWarning(
                     "Blocking off-list foreground app {ProcessName} (pid={Pid}) in session {SessionId}",
                     change.App.ProcessName, change.ProcessId, id);
-                _enforcer.Block(change.WindowHandle);
+                var restored = _enforcer.Block(change.WindowHandle);
+                if (!restored)
+                {
+                    _log.LogInformation(
+                        "No allowed-window fallback after blocking {ProcessName}; surfacing overlay",
+                        change.App.ProcessName);
+                    try { _overlay.Show(matcher.UserRules, change.App.ProcessName); }
+                    catch (Exception ex) { _log.LogWarning(ex, "Overlay.Show threw"); }
+                }
             }
         }
         catch (Exception ex)
