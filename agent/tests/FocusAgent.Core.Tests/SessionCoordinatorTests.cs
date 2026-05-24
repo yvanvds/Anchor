@@ -130,6 +130,73 @@ public class SessionCoordinatorTests
     }
 
     [Fact]
+    public async Task RejoinAsync_invokes_hub_JoinSession_with_no_join_code_and_fires_SessionJoined()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi();
+        var coordinator = NewCoordinator(hub, ui);
+
+        SessionStartedPayload? joined = null;
+        coordinator.SessionJoined += (_, p) => joined = p;
+
+        var payload = Payload();
+        await coordinator.RejoinAsync(payload);
+
+        // Rehydration must not go through the toast UI.
+        Assert.Empty(ui.Shown);
+
+        Assert.Single(hub.JoinCalls);
+        Assert.Equal(payload.SessionId, hub.JoinCalls[0].SessionId);
+        Assert.Null(hub.JoinCalls[0].JoinCode);
+
+        Assert.Equal(payload, joined);
+        Assert.Equal(payload.SessionId, coordinator.JoinedSessionId);
+    }
+
+    [Fact]
+    public async Task RejoinAsync_is_idempotent_when_session_already_joined()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi();
+        var coordinator = NewCoordinator(hub, ui);
+
+        var joinedFireCount = 0;
+        coordinator.SessionJoined += (_, _) => joinedFireCount++;
+
+        var payload = Payload();
+        await coordinator.RejoinAsync(payload);
+        await coordinator.RejoinAsync(payload);
+
+        Assert.Single(hub.JoinCalls);
+        Assert.Equal(1, joinedFireCount);
+    }
+
+    [Fact]
+    public async Task SessionStarted_for_already_joined_session_skips_toast_and_re_join()
+    {
+        // Race scenario from #54: rehydration just rejoined session X, then a
+        // fresh SessionStarted broadcast for X arrives. The coordinator must
+        // not show the toast or call JoinSession again.
+        var hub = new FakeHub();
+        var ui = new FakeUi { NextDecision = JoinDecision.Confirmed };
+        var coordinator = NewCoordinator(hub, ui);
+
+        var payload = Payload();
+        await coordinator.RejoinAsync(payload);
+        Assert.Single(hub.JoinCalls);
+        Assert.Empty(ui.Shown);
+
+        var joinedAgain = 0;
+        coordinator.SessionJoined += (_, _) => joinedAgain++;
+
+        await coordinator.HandleSessionStartedAsync(payload);
+
+        Assert.Empty(ui.Shown);
+        Assert.Single(hub.JoinCalls);
+        Assert.Equal(0, joinedAgain);
+    }
+
+    [Fact]
     public async Task SessionJoined_does_not_fire_when_decline_or_abort()
     {
         var hub = new FakeHub();

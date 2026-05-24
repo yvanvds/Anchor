@@ -375,4 +375,98 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
         Assert.Single(body!);
         Assert.Equal(live.Id, body![0].Id);
     }
+
+    // ------- GET /sessions/rejoinable -------
+
+    [Fact]
+    public async Task GET_sessions_rejoinable_unauthenticated_returns_401()
+    {
+        using var client = _factory.CreateClient();
+        var response = await client.GetAsync("/sessions/rejoinable");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GET_sessions_rejoinable_returns_only_actively_joined_non_declined_non_left_non_ended_sessions()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 1);
+        var student = scenario.Students[0];
+
+        // Session A: actively joined (JoinedAt set, LeftAt null, DeclinedAt null) — should appear.
+        var joined = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, new[] { student.Id });
+        await SetParticipantStateAsync(joined.Id, student.Id, joinedAt: DateTimeOffset.UtcNow.AddMinutes(-2));
+
+        // Session B: declined — should NOT appear.
+        var declined = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, new[] { student.Id });
+        await SetParticipantStateAsync(declined.Id, student.Id, declinedAt: DateTimeOffset.UtcNow.AddMinutes(-2));
+
+        // Session C: left after joining — should NOT appear.
+        var left = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, new[] { student.Id });
+        await SetParticipantStateAsync(left.Id, student.Id,
+            joinedAt: DateTimeOffset.UtcNow.AddMinutes(-3),
+            leftAt: DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        // Session D: never joined (no JoinedAt) — should NOT appear (agent restart shouldn't rejoin
+        // a session the student never confirmed in the first place).
+        await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, new[] { student.Id });
+
+        // Session E: ended — should NOT appear even though student was actively joined.
+        var ended = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, new[] { student.Id }, ended: true);
+        await SetParticipantStateAsync(ended.Id, student.Id, joinedAt: DateTimeOffset.UtcNow.AddMinutes(-10));
+
+        // Session F: a session the student isn't a participant of at all — should NOT appear.
+        var foreign = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        await TestSeed.AddSessionAsync(
+            _factory, foreign.Teacher.Id, foreign.Class.Id, foreign.Students.Select(s => s.Id).ToList());
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetStudent(client, student);
+
+        var body = await client.GetFromJsonAsync<List<SessionSummary>>("/sessions/rejoinable");
+
+        Assert.NotNull(body);
+        Assert.Single(body!);
+        Assert.Equal(joined.Id, body![0].Id);
+    }
+
+    [Fact]
+    public async Task GET_sessions_rejoinable_for_teacher_returns_empty()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        // Teacher has a running session but isn't a participant row — rejoin
+        // is a student-side concept.
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+        await SetParticipantStateAsync(session.Id, scenario.Students[0].Id, joinedAt: DateTimeOffset.UtcNow);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var body = await client.GetFromJsonAsync<List<SessionSummary>>("/sessions/rejoinable");
+
+        Assert.NotNull(body);
+        Assert.Empty(body!);
+    }
+
+    private async Task SetParticipantStateAsync(
+        Guid sessionId,
+        Guid userId,
+        DateTimeOffset? joinedAt = null,
+        DateTimeOffset? declinedAt = null,
+        DateTimeOffset? leftAt = null)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var participant = await db.SessionParticipants
+            .SingleAsync(p => p.SessionId == sessionId && p.UserId == userId);
+        if (joinedAt.HasValue) participant.JoinedAt = joinedAt;
+        if (declinedAt.HasValue) participant.DeclinedAt = declinedAt;
+        if (leftAt.HasValue) participant.LeftAt = leftAt;
+        await db.SaveChangesAsync();
+    }
 }
