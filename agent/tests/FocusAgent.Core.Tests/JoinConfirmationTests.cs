@@ -13,7 +13,8 @@ public class JoinConfirmationTests
             StartedAt: DateTimeOffset.UnixEpoch,
             JoinCode: "123456",
             Apps: Array.Empty<AllowedAppDto>(),
-            Domains: Array.Empty<AllowedDomainDto>());
+            Domains: Array.Empty<AllowedDomainDto>(),
+            BlockedDomains: Array.Empty<BlockedDomainDto>());
 
     [Fact]
     public void Confirms_when_timer_elapses()

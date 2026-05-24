@@ -248,7 +248,8 @@ public class FocusSessionControllerTests
         StartedAt: DateTimeOffset.UnixEpoch,
         JoinCode: "123456",
         Apps: apps ?? Array.Empty<AllowedAppDto>(),
-        Domains: Array.Empty<AllowedDomainDto>());
+        Domains: Array.Empty<AllowedDomainDto>(),
+        BlockedDomains: Array.Empty<BlockedDomainDto>());
 
     private static ForegroundChange ForegroundFor(string process, nint hwnd, string? exePath = null, string? publisher = null, int pid = 4242) =>
         new(new AppInfo(process, exePath, publisher), WindowTitle: process, ProcessId: pid, WindowHandle: hwnd);

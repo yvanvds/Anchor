@@ -169,6 +169,41 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
         var broadcast = Assert.Single(broadcaster.SessionStartedCalls, p => p.SessionId == body!.Id);
         Assert.NotEmpty(broadcast.Payload.Apps);
         Assert.NotEmpty(broadcast.Payload.Domains);
+        // Strict mode never carries a blocklist (#76).
+        Assert.Empty(broadcast.Payload.BlockedDomains);
+    }
+
+    [Fact]
+    public async Task POST_sessions_in_loose_mode_carries_blocklist_and_baseline_allowlist()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 1);
+        // Seed the blocklist override the factory injected so we can assert
+        // the wire contents without depending on the shipped catalogue.
+        _factory.BlocklistOverride.Entries = new[]
+        {
+            new BlockedDomainDto("Suffix", "facebook.com"),
+            new BlockedDomainDto("Suffix", "tiktok.com"),
+        };
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.PostAsJsonAsync(
+            "/sessions",
+            new StartSessionRequest(scenario.Class.Id, "Loose", null));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<StartSessionResponse>();
+
+        var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
+        var broadcast = Assert.Single(broadcaster.SessionStartedCalls, p => p.SessionId == body!.Id);
+        Assert.Equal("Loose", broadcast.Payload.Mode);
+        // Baseline allow-list still ships so login flows aren't blocked.
+        Assert.Contains(broadcast.Payload.Domains, d => d.Value == "*.microsoftonline.com");
+        Assert.Contains(broadcast.Payload.BlockedDomains, b => b.Value == "facebook.com");
+        Assert.Contains(broadcast.Payload.BlockedDomains, b => b.Value == "tiktok.com");
+
+        _factory.BlocklistOverride.Entries = Array.Empty<BlockedDomainDto>();
     }
 
     // ------- POST /sessions/{id}/end -------

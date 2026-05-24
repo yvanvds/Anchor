@@ -215,7 +215,8 @@ public class SessionHeartbeatServiceTests
         StartedAt: DateTimeOffset.UnixEpoch,
         JoinCode: "123456",
         Apps: Array.Empty<AllowedAppDto>(),
-        Domains: Array.Empty<AllowedDomainDto>());
+        Domains: Array.Empty<AllowedDomainDto>(),
+        BlockedDomains: Array.Empty<BlockedDomainDto>());
 
     private static async Task AdvanceAndDrainAsync(FakeTimeProvider clock, TimeSpan by)
     {

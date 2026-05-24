@@ -1,3 +1,4 @@
+using Anchor.Api.Realtime;
 using Anchor.Api.Sessions;
 using Anchor.Domain.Bundles;
 using Anchor.Domain.Classes;
@@ -10,7 +11,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Anchor.Api.Tests;
 
 /// <summary>
-/// Unit tests for the bundle → wire-DTO expansion (#70). Each test
+/// Unit tests for the bundle → wire-DTO expansion (#70, #76). Each test
 /// stands up its own in-memory SQLite so bundle state can't bleed
 /// between cases.
 /// </summary>
@@ -18,6 +19,7 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
 {
     private SqliteConnection _connection = null!;
     private AnchorDbContext _db = null!;
+    private FakeBlocklistProvider _blocklist = null!;
 
     public Task InitializeAsync()
     {
@@ -28,6 +30,7 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
             .Options;
         _db = new AnchorDbContext(options);
         _db.Database.EnsureCreated();
+        _blocklist = new FakeBlocklistProvider();
         return Task.CompletedTask;
     }
 
@@ -38,17 +41,18 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Empty_bundle_set_returns_only_baseline()
+    public async Task Strict_empty_bundle_set_returns_baseline_and_empty_blocklist()
     {
-        var expander = new SessionAllowlistExpander(_db);
+        var expander = new SessionAllowlistExpander(_db, _blocklist);
 
-        var expanded = await expander.ExpandAsync(Array.Empty<Guid>());
+        var expanded = await expander.ExpandAsync(Array.Empty<Guid>(), SessionMode.Strict);
 
         Assert.Equal(SessionAllowlist.BaselineApps.Count, expanded.Apps.Count);
         Assert.Equal(SessionAllowlist.BaselineDomains.Count, expanded.Domains.Count);
         Assert.Contains(expanded.Apps, a => a.MatchKind == "ProcessName" && a.Value == "msedge");
         Assert.Contains(expanded.Apps, a => a.MatchKind == "ProcessName" && a.Value == "explorer");
         Assert.Contains(expanded.Domains, d => d.Value == "*.microsoftonline.com");
+        Assert.Empty(expanded.BlockedDomains);
     }
 
     [Fact]
@@ -60,9 +64,9 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
             (BundleEntryKind.Domain, "exact.example.com", BundleEntryMatchType.Exact),
             (BundleEntryKind.Domain, "school.local", BundleEntryMatchType.Suffix),
         });
-        var expander = new SessionAllowlistExpander(_db);
+        var expander = new SessionAllowlistExpander(_db, _blocklist);
 
-        var expanded = await expander.ExpandAsync(new[] { bundleId });
+        var expanded = await expander.ExpandAsync(new[] { bundleId }, SessionMode.Strict);
 
         Assert.Contains(expanded.Domains, d => d.MatchType == "Wildcard" && d.Value == "*.smartschool.be");
         Assert.Contains(expanded.Domains, d => d.MatchType == "Exact" && d.Value == "exact.example.com");
@@ -79,9 +83,9 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
             (BundleEntryKind.App, "winword", BundleEntryMatchType.Exact),
             (BundleEntryKind.App, "International GeoGebra Institute", BundleEntryMatchType.SignedPublisher),
         });
-        var expander = new SessionAllowlistExpander(_db);
+        var expander = new SessionAllowlistExpander(_db, _blocklist);
 
-        var expanded = await expander.ExpandAsync(new[] { bundleId });
+        var expanded = await expander.ExpandAsync(new[] { bundleId }, SessionMode.Strict);
 
         Assert.Contains(expanded.Apps, a => a.MatchKind == "ProcessName" && a.Value == "winword");
         Assert.Contains(expanded.Apps, a => a.MatchKind == "Publisher" && a.Value == "International GeoGebra Institute");
@@ -95,9 +99,9 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
             (BundleEntryKind.App, "MSEDGE", BundleEntryMatchType.Exact),
             (BundleEntryKind.Domain, "*.office.com", BundleEntryMatchType.Wildcard),
         });
-        var expander = new SessionAllowlistExpander(_db);
+        var expander = new SessionAllowlistExpander(_db, _blocklist);
 
-        var expanded = await expander.ExpandAsync(new[] { bundleId });
+        var expanded = await expander.ExpandAsync(new[] { bundleId }, SessionMode.Strict);
 
         Assert.Single(expanded.Apps, a => a.MatchKind == "ProcessName" && a.Value.Equals("msedge", StringComparison.OrdinalIgnoreCase));
         Assert.Single(expanded.Domains, d => d.MatchType == "Wildcard" && d.Value.Equals("*.office.com", StringComparison.OrdinalIgnoreCase));
@@ -114,9 +118,9 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
         {
             (BundleEntryKind.Domain, "*.b.example", BundleEntryMatchType.Wildcard),
         });
-        var expander = new SessionAllowlistExpander(_db);
+        var expander = new SessionAllowlistExpander(_db, _blocklist);
 
-        var expanded = await expander.ExpandAsync(new[] { a, b });
+        var expanded = await expander.ExpandAsync(new[] { a, b }, SessionMode.Strict);
 
         Assert.Contains(expanded.Domains, d => d.Value == "*.a.example");
         Assert.Contains(expanded.Domains, d => d.Value == "*.b.example");
@@ -151,8 +155,8 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
         _db.SessionBundles.Add(new SessionBundle { SessionId = sessionId, BundleId = bundleId });
         await _db.SaveChangesAsync();
 
-        var expander = new SessionAllowlistExpander(_db);
-        var expanded = await expander.ExpandForSessionAsync(sessionId);
+        var expander = new SessionAllowlistExpander(_db, _blocklist);
+        var expanded = await expander.ExpandForSessionAsync(sessionId, SessionMode.Strict);
 
         Assert.Contains(expanded.Domains, d => d.Value == "*.live.example");
     }
@@ -166,13 +170,91 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
             (BundleEntryKind.App, "", BundleEntryMatchType.Exact),
             (BundleEntryKind.Domain, "real.example", BundleEntryMatchType.Exact),
         });
-        var expander = new SessionAllowlistExpander(_db);
+        var expander = new SessionAllowlistExpander(_db, _blocklist);
 
-        var expanded = await expander.ExpandAsync(new[] { bundleId });
+        var expanded = await expander.ExpandAsync(new[] { bundleId }, SessionMode.Strict);
 
         Assert.Contains(expanded.Domains, d => d.Value == "real.example");
         Assert.DoesNotContain(expanded.Domains, d => string.IsNullOrWhiteSpace(d.Value));
         Assert.DoesNotContain(expanded.Apps, a => string.IsNullOrWhiteSpace(a.Value));
+    }
+
+    // ---------------------- #76 — loose-mode behaviour ----------------------
+
+    [Fact]
+    public async Task Loose_empty_bundle_set_carries_baseline_allow_and_curated_blocklist()
+    {
+        _blocklist.Entries = new[]
+        {
+            new BlockedDomainDto(AllowedDomainMatchTypes.Suffix, "facebook.com"),
+            new BlockedDomainDto(AllowedDomainMatchTypes.Suffix, "tiktok.com"),
+        };
+        var expander = new SessionAllowlistExpander(_db, _blocklist);
+
+        var expanded = await expander.ExpandAsync(Array.Empty<Guid>(), SessionMode.Loose);
+
+        // Baseline allow-list still ships in loose mode — otherwise we'd block
+        // login.microsoftonline.com etc. and break auth flows.
+        Assert.Contains(expanded.Domains, d => d.Value == "*.microsoftonline.com");
+        Assert.Contains(expanded.BlockedDomains, b => b.Value == "facebook.com" && b.MatchType == "Suffix");
+        Assert.Contains(expanded.BlockedDomains, b => b.Value == "tiktok.com");
+    }
+
+    [Fact]
+    public async Task Loose_with_bundle_keeps_bundle_in_allow_list_and_still_carries_blocklist()
+    {
+        // A teacher picking Loose AND a bundle should get bundle domains in
+        // AllowedDomains in addition to baseline, with the blocklist alongside.
+        // Silently dropping bundle picks would be a surprise.
+        var bundleId = await SeedBundleAsync("Geo", entries: new[]
+        {
+            (BundleEntryKind.Domain, "*.geogebra.org", BundleEntryMatchType.Wildcard),
+        });
+        _blocklist.Entries = new[]
+        {
+            new BlockedDomainDto(AllowedDomainMatchTypes.Suffix, "reddit.com"),
+        };
+        var expander = new SessionAllowlistExpander(_db, _blocklist);
+
+        var expanded = await expander.ExpandAsync(new[] { bundleId }, SessionMode.Loose);
+
+        Assert.Contains(expanded.Domains, d => d.Value == "*.geogebra.org");
+        Assert.Contains(expanded.BlockedDomains, b => b.Value == "reddit.com");
+    }
+
+    [Fact]
+    public async Task Strict_blocklist_is_always_empty_even_if_provider_has_entries()
+    {
+        _blocklist.Entries = new[]
+        {
+            new BlockedDomainDto(AllowedDomainMatchTypes.Suffix, "facebook.com"),
+        };
+        var expander = new SessionAllowlistExpander(_db, _blocklist);
+
+        var expanded = await expander.ExpandAsync(Array.Empty<Guid>(), SessionMode.Strict);
+
+        // The blocklist is loose-mode only; strict sessions should never see
+        // these entries (they'd be ignored, but shipping them would be noise).
+        Assert.Empty(expanded.BlockedDomains);
+    }
+
+    [Fact]
+    public async Task Loose_blocklist_is_deduped_on_match_type_and_lowercase_value()
+    {
+        _blocklist.Entries = new[]
+        {
+            new BlockedDomainDto(AllowedDomainMatchTypes.Suffix, "REDDIT.com"),
+            new BlockedDomainDto(AllowedDomainMatchTypes.Suffix, "reddit.com"),
+            new BlockedDomainDto(AllowedDomainMatchTypes.Suffix, "  "),
+            new BlockedDomainDto(AllowedDomainMatchTypes.Suffix, "tiktok.com"),
+        };
+        var expander = new SessionAllowlistExpander(_db, _blocklist);
+
+        var expanded = await expander.ExpandAsync(Array.Empty<Guid>(), SessionMode.Loose);
+
+        Assert.Equal(2, expanded.BlockedDomains.Count);
+        Assert.Contains(expanded.BlockedDomains, b => b.Value.Equals("reddit.com", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(expanded.BlockedDomains, b => b.Value == "tiktok.com");
     }
 
     private async Task<Guid> SeedBundleAsync(
@@ -193,5 +275,11 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
         }
         await _db.SaveChangesAsync();
         return bundle.Id;
+    }
+
+    private sealed class FakeBlocklistProvider : ILooseModeBlocklistProvider
+    {
+        public IReadOnlyList<BlockedDomainDto> Entries { get; set; } = Array.Empty<BlockedDomainDto>();
+        public IReadOnlyList<BlockedDomainDto> GetBlocklist() => Entries;
     }
 }

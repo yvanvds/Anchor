@@ -104,6 +104,7 @@ if (!builder.Environment.IsEnvironment("Test"))
 
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<JoinByCodeRateLimiter>();
+builder.Services.AddSingleton<ILooseModeBlocklistProvider, LooseModeBlocklistProvider>();
 builder.Services.AddScoped<ISessionAllowlistExpander, SessionAllowlistExpander>();
 builder.Services.AddSingleton<ISessionBroadcaster, SessionBroadcaster>();
 builder.Services.AddSingleton<HeartbeatTracker>();

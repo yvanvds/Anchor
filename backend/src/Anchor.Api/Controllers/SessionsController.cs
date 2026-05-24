@@ -129,7 +129,7 @@ public sealed class SessionsController : ControllerBase
 
         await _db.SaveChangesAsync(cancellationToken);
 
-        var expanded = await _allowlist.ExpandAsync(bundleIds, cancellationToken);
+        var expanded = await _allowlist.ExpandAsync(bundleIds, session.Mode, cancellationToken);
         await _broadcaster.SessionStartedAsync(
             BuildStartedPayload(session, expanded),
             broadcastRecipientIds,
@@ -147,7 +147,8 @@ public sealed class SessionsController : ControllerBase
             session.StartedAt,
             session.JoinCode,
             allowlist.Apps,
-            allowlist.Domains);
+            allowlist.Domains,
+            allowlist.BlockedDomains);
 
     [HttpPost("{id:guid}/end")]
     [Authorize(Policy = AuthorizationPolicies.Teacher)]
@@ -306,7 +307,7 @@ public sealed class SessionsController : ControllerBase
         var sessions = new List<SessionStartedPayload>(ordered.Count);
         foreach (var row in ordered)
         {
-            var expanded = await _allowlist.ExpandForSessionAsync(row.Id, cancellationToken);
+            var expanded = await _allowlist.ExpandForSessionAsync(row.Id, row.Mode, cancellationToken);
             sessions.Add(new SessionStartedPayload(
                 row.Id,
                 row.ClassId,
@@ -314,7 +315,8 @@ public sealed class SessionsController : ControllerBase
                 row.StartedAt,
                 row.JoinCode,
                 expanded.Apps,
-                expanded.Domains));
+                expanded.Domains,
+                expanded.BlockedDomains));
         }
 
         return Ok(sessions);
@@ -406,7 +408,7 @@ public sealed class SessionsController : ControllerBase
         // this up and the #31 join-confirmation flow takes over. Keeping the
         // payload identical to the roster-based push means the agent needs
         // no new client-side branch.
-        var expanded = await _allowlist.ExpandForSessionAsync(session.Id, cancellationToken);
+        var expanded = await _allowlist.ExpandForSessionAsync(session.Id, session.Mode, cancellationToken);
         await _broadcaster.SessionStartedAsync(
             BuildStartedPayload(session, expanded),
             new[] { caller.Id },

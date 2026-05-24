@@ -235,7 +235,8 @@ public partial class App : Application
             StartedAt: DateTimeOffset.UtcNow,
             JoinCode: "TOAST41",
             Apps: Array.Empty<AllowedAppDto>(),
-            Domains: Array.Empty<AllowedDomainDto>());
+            Domains: Array.Empty<AllowedDomainDto>(),
+            BlockedDomains: Array.Empty<BlockedDomainDto>());
         var confirmation = new JoinConfirmation(payload, "Self-Test Teacher", TimeSpan.FromSeconds(5), TimeProvider.System);
 
         // Kick off the show on the UI thread — ShowJoinConfirmationAsync

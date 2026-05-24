@@ -120,13 +120,14 @@ class SessionsApi {
   Future<StartSessionResponse> startSession(
     String classId, {
     List<String> bundleIds = const <String>[],
+    String mode = 'Strict',
   }) async {
     final res = await _client.post(
       'sessions',
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'classId': classId,
-        'mode': 'Strict',
+        'mode': mode,
         'bundleIds': bundleIds,
       }),
     );

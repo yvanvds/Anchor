@@ -1,5 +1,5 @@
 import { HubClient } from './shared/hub-client';
-import { isUrlAllowed } from './shared/host-matcher';
+import { isUrlAllowed, isUrlBlockedByLoose } from './shared/host-matcher';
 import { logger } from './shared/logger';
 import { loadSettings } from './shared/settings';
 import {
@@ -78,12 +78,14 @@ async function handleSessionStarted(payload: SessionStartedPayload): Promise<voi
     // Wire shape already matches the matcher's AllowedDomain (camelCase
     // matchType + value), so no field renaming is needed here.
     domains: payload.domains ?? [],
+    blockedDomains: payload.blockedDomains ?? [],
   };
   await setActiveSession(state);
   log.info('active session cached', {
     sessionId: state.sessionId,
     mode: state.mode,
     domainCount: state.domains.length,
+    blockedDomainCount: state.blockedDomains.length,
   });
 }
 
@@ -210,8 +212,16 @@ async function evaluateAndMaybeBlock(tabId: number, url: string): Promise<void> 
   }
 
   if (session.mode.toLowerCase() === 'loose') {
-    // Loose mode = pass everything for now. The known-bad-categories logic
-    // lands in a separate issue per the #72 spec.
+    // Loose mode (#76): block only when the URL matches the server-pushed
+    // blocklist AND isn't covered by the baseline allow-list. Anything else
+    // passes through — the design's "general lessons" mode where the teacher
+    // doesn't want to curate.
+    if (!isUrlBlockedByLoose(url, session.domains, session.blockedDomains)) {
+      return;
+    }
+    log.info('blocking loose-mode navigation', { tabId, url, sessionId: session.sessionId });
+    await redirectToBlockPage(tabId, url, session);
+    await reportBlockedUrl(session.sessionId, tabId, url);
     return;
   }
 

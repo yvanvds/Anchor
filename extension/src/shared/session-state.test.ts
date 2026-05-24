@@ -9,6 +9,7 @@ const baseState = (domains: AllowedDomainDto[]): ActiveSessionState => ({
   joinCode: '123456',
   startedAt: '2026-05-24T00:00:00Z',
   domains,
+  blockedDomains: [],
 });
 
 describe('mergeDomainsInto', () => {

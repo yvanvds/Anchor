@@ -8,4 +8,10 @@ class BundlePrefsImpl implements BundlePrefs {
 
   @override
   void writeSelection(String accountKey, List<String> bundleIds) {}
+
+  @override
+  String? readMode(String accountKey) => null;
+
+  @override
+  void writeMode(String accountKey, String mode) {}
 }

@@ -144,7 +144,8 @@ public class SessionRehydrationServiceTests
         StartedAt: DateTimeOffset.UnixEpoch,
         JoinCode: "987654",
         Apps: Array.Empty<AllowedAppDto>(),
-        Domains: Array.Empty<AllowedDomainDto>());
+        Domains: Array.Empty<AllowedDomainDto>(),
+        BlockedDomains: Array.Empty<BlockedDomainDto>());
 
     private sealed class StubClient : ISessionRehydrationClient
     {

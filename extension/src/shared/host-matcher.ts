@@ -1,14 +1,16 @@
-// Pure host-match logic for the session allowlist. No DOM, no chrome APIs —
-// runnable in vanilla Node so it can be unit-tested without a browser harness.
-// Mirrors the wire shape produced by the backend's SessionAllowlistExpander
-// (#70): each entry carries a MatchType string and a value, and the
-// MatchType vocabulary tracks BundleEntryMatchType / AllowedDomainMatchTypes
-// so the agent and the extension speak the same dialect.
+// Pure host-match logic for the session allowlist / loose-mode blocklist.
+// No DOM, no chrome APIs — runnable in vanilla Node so it can be unit-tested
+// without a browser harness. Mirrors the wire shape produced by the backend's
+// SessionAllowlistExpander (#70, #76): each entry carries a MatchType string
+// and a value, and the MatchType vocabulary tracks BundleEntryMatchType /
+// AllowedDomainMatchTypes so the agent and the extension speak the same
+// dialect.
 
 /**
- * The match-type values the backend emits in AllowedDomainDto.MatchType.
- * Kept as a string union (not an enum) because the wire format is strings;
- * an enum would force a translation layer on every payload.
+ * The match-type values the backend emits in AllowedDomainDto.MatchType /
+ * BlockedDomainDto.MatchType. Kept as a string union (not an enum) because
+ * the wire format is strings; an enum would force a translation layer on
+ * every payload.
  */
 export type DomainMatchType = 'Exact' | 'Wildcard' | 'Suffix';
 
@@ -17,8 +19,44 @@ export interface AllowedDomain {
   value: string;
 }
 
+export interface BlockedDomain {
+  matchType: DomainMatchType;
+  value: string;
+}
+
 /**
- * Returns true if the given URL's hostname is allowed by any of the rules.
+ * Returns true if the URL's hostname matches any rule in the list. This is
+ * the shared primitive both modes' decision functions wrap — keeping the
+ * match logic in one place so allow- and block-lists can't drift in subtle
+ * ways (e.g. one being case-sensitive and the other not).
+ *
+ * Non-http(s) URLs (chrome:, edge:, file:, about:, javascript:, data:, ...)
+ * never match: they're treated as not-a-navigation by the upstream callers
+ * (block-pageworthy navigations only happen on http/s), so they evaluate to
+ * "doesn't match anything" and the caller's allow/block default takes over.
+ */
+export function hostMatchesAny(url: string, rules: ReadonlyArray<{ matchType: DomainMatchType; value: string }>): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return false;
+  }
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname.length === 0) return false;
+
+  for (const rule of rules) {
+    if (matches(hostname, rule)) return true;
+  }
+  return false;
+}
+
+/**
+ * Strict-mode decision: allow only if the host matches an entry in the
+ * allowlist.
  *
  * Rules:
  * - `Exact`    — case-insensitive hostname equality.
@@ -40,34 +78,42 @@ export interface AllowedDomain {
  * always-allowed domains server-side, so the empty case here means "block".
  */
 export function isUrlAllowed(url: string, rules: ReadonlyArray<AllowedDomain>): boolean {
+  if (isExemptScheme(url)) return true;
+  return hostMatchesAny(url, rules);
+}
+
+/**
+ * Loose-mode decision (#76): block iff the host matches the blocklist AND is
+ * NOT in the baseline allowlist. Baseline always-allow (auth domains, our
+ * backend, fonts) takes precedence so login flows never accidentally trip
+ * the social/video/gaming filter — e.g. login.microsoftonline.com must keep
+ * working even if some future blocklist entry overlaps.
+ *
+ * Returns true when the URL should be blocked, false when it should pass
+ * through. Non-http(s) URLs always pass through (same rationale as
+ * isUrlAllowed).
+ */
+export function isUrlBlockedByLoose(
+  url: string,
+  baselineAllow: ReadonlyArray<AllowedDomain>,
+  blocked: ReadonlyArray<BlockedDomain>,
+): boolean {
+  if (isExemptScheme(url)) return false;
+  if (hostMatchesAny(url, baselineAllow)) return false;
+  return hostMatchesAny(url, blocked);
+}
+
+function isExemptScheme(url: string): boolean {
   let parsed: URL;
   try {
     parsed = new URL(url);
   } catch {
-    // Unparseable URL — treat as not-a-navigation. Filtering only protects
-    // http(s) anyway; everything else (about:blank, javascript:, ...) should
-    // pass through to whatever the browser would normally do.
     return true;
   }
-
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return true;
-  }
-
-  const hostname = parsed.hostname.toLowerCase();
-  if (hostname.length === 0) {
-    return true;
-  }
-
-  for (const rule of rules) {
-    if (matches(hostname, rule)) {
-      return true;
-    }
-  }
-  return false;
+  return parsed.protocol !== 'http:' && parsed.protocol !== 'https:';
 }
 
-function matches(hostname: string, rule: AllowedDomain): boolean {
+function matches(hostname: string, rule: { matchType: DomainMatchType; value: string }): boolean {
   const raw = rule.value?.trim().toLowerCase();
   if (!raw) return false;
 
