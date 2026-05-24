@@ -139,6 +139,69 @@ public class FocusSessionControllerTests
     }
 
     [Fact]
+    public async Task Overlay_is_shown_when_block_has_no_fallback()
+    {
+        var fixtures = new Fixtures
+        {
+            AllowedAppRules = { new() { MatchKind = AllowedAppMatchKind.ProcessName, Value = "winword" } },
+        };
+        fixtures.Enforcer.BlockRestoresFallback = false;
+        var (_, _) = BuildController(fixtures);
+        await fixtures.Hub.RaiseSessionStarted(NewPayload());
+
+        fixtures.Watcher.Raise(ForegroundFor("notepad", hwnd: 0x200));
+
+        var shown = Assert.Single(fixtures.Overlay.Shown);
+        Assert.Equal("notepad", shown.BlockedAppName);
+        // Baseline rules (msedge, explorer) must not leak into the overlay's
+        // user-facing list — only the teacher-supplied rules.
+        Assert.Equal(new[] { "winword" }, shown.Rules.Select(r => r.Value).ToArray());
+        Assert.Equal(0, fixtures.Overlay.HideCount);
+    }
+
+    [Fact]
+    public async Task Overlay_is_not_shown_when_block_restores_fallback()
+    {
+        var fixtures = new Fixtures();
+        fixtures.Enforcer.BlockRestoresFallback = true;
+        var (_, _) = BuildController(fixtures);
+        await fixtures.Hub.RaiseSessionStarted(NewPayload());
+
+        fixtures.Watcher.Raise(ForegroundFor("notepad", hwnd: 0x200));
+
+        Assert.Empty(fixtures.Overlay.Shown);
+    }
+
+    [Fact]
+    public async Task Overlay_is_hidden_when_allowed_foreground_change_arrives()
+    {
+        var fixtures = new Fixtures
+        {
+            AllowedAppRules = { new() { MatchKind = AllowedAppMatchKind.ProcessName, Value = "winword" } },
+        };
+        var (_, _) = BuildController(fixtures);
+        await fixtures.Hub.RaiseSessionStarted(NewPayload());
+
+        fixtures.Watcher.Raise(ForegroundFor("winword", hwnd: 0x100));
+
+        Assert.Equal(1, fixtures.Overlay.HideCount);
+        Assert.Empty(fixtures.Overlay.Shown);
+    }
+
+    [Fact]
+    public async Task Overlay_is_closed_on_session_end()
+    {
+        var fixtures = new Fixtures();
+        var (_, _) = BuildController(fixtures);
+        var payload = NewPayload();
+        await fixtures.Hub.RaiseSessionStarted(payload);
+
+        fixtures.Hub.RaiseSessionEnded(payload.SessionId);
+
+        Assert.Equal(1, fixtures.Overlay.CloseCount);
+    }
+
+    [Fact]
     public async Task After_leave_subsequent_foreground_changes_are_ignored()
     {
         var fixtures = new Fixtures();
@@ -181,6 +244,7 @@ public class FocusSessionControllerTests
             fixtures.Watcher,
             fixtures.Enforcer,
             fixtures.Reporter,
+            fixtures.Overlay,
             settings,
             fixtures.Clock);
         fixtures.Coordinator = coordinator;
@@ -193,6 +257,7 @@ public class FocusSessionControllerTests
         public FakeForegroundWatcher Watcher { get; } = new();
         public RecordingEnforcer Enforcer { get; } = new();
         public RecordingReporter Reporter { get; } = new();
+        public RecordingOverlay Overlay { get; } = new();
         public FakeTimeProvider Clock { get; } = new(DateTimeOffset.UnixEpoch);
         public List<AllowedAppRule> AllowedAppRules { get; } = new();
         public JoinDecision UiDecision { get; set; } = JoinDecision.Confirmed;
@@ -258,9 +323,30 @@ public class FocusSessionControllerTests
         public List<nint> Remembered { get; } = new();
         public List<nint> Blocked { get; } = new();
         public int ResetCount { get; private set; }
+        /// <summary>
+        /// When true, <see cref="Block"/> claims it successfully restored
+        /// focus to a previously-allowed window. The default (false) models
+        /// "no fallback" — which is what should trigger the overlay.
+        /// </summary>
+        public bool BlockRestoresFallback { get; set; }
         public void RememberAllowed(nint windowHandle) => Remembered.Add(windowHandle);
-        public void Block(nint offendingWindowHandle) => Blocked.Add(offendingWindowHandle);
+        public bool Block(nint offendingWindowHandle)
+        {
+            Blocked.Add(offendingWindowHandle);
+            return BlockRestoresFallback;
+        }
         public void Reset() => ResetCount++;
+    }
+
+    private sealed class RecordingOverlay : IFocusOverlay
+    {
+        public List<(IReadOnlyList<AllowedAppRule> Rules, string? BlockedAppName)> Shown { get; } = new();
+        public int HideCount { get; private set; }
+        public int CloseCount { get; private set; }
+        public void Show(IReadOnlyList<AllowedAppRule> allowedRules, string? blockedAppName)
+            => Shown.Add((allowedRules, blockedAppName));
+        public void Hide() => HideCount++;
+        public void Close() => CloseCount++;
     }
 
     private sealed class RecordingReporter : IFocusEventReporter

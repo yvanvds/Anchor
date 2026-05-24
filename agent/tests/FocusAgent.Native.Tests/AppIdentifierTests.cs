@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.Versioning;
+using FocusAgent.Core.Focus;
 using FocusAgent.Native;
 
 namespace FocusAgent.Native.Tests;
@@ -63,5 +64,40 @@ public class AppIdentifierTests
     {
         var publisher = AuthenticodeReader.ReadPublisher(@"C:\__does_not_exist__\nope.exe");
         Assert.Null(publisher);
+    }
+
+    [Fact]
+    public void LaunchOrActivate_publisher_rule_is_not_actionable()
+    {
+        var identifier = new AppIdentifier();
+        var rule = new AllowedAppRule
+        {
+            MatchKind = AllowedAppMatchKind.Publisher,
+            Value = "International GeoGebra Institute",
+        };
+
+        Assert.False(identifier.LaunchOrActivate(rule));
+    }
+
+    [Fact]
+    public void LaunchOrActivate_empty_value_returns_false()
+    {
+        var identifier = new AppIdentifier();
+        var rule = new AllowedAppRule { MatchKind = AllowedAppMatchKind.ProcessName, Value = "" };
+
+        Assert.False(identifier.LaunchOrActivate(rule));
+    }
+
+    [Fact]
+    public void LaunchOrActivate_unknown_process_name_returns_false()
+    {
+        var identifier = new AppIdentifier();
+        var rule = new AllowedAppRule
+        {
+            MatchKind = AllowedAppMatchKind.ProcessName,
+            Value = "this_process_definitely_does_not_exist_12345",
+        };
+
+        Assert.False(identifier.LaunchOrActivate(rule));
     }
 }

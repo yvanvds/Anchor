@@ -18,6 +18,15 @@ public static class Program
     public const string ShowTestToastArg = "--show-test-toast";
 
     /// <summary>
+    /// Dev-only flag (#33): shows the focus-enforcement overlay against a
+    /// synthetic allowlist, with no WAM / hub / coordinator bootstrap, and
+    /// exits after a short buffer. Used by <c>scripts/dev/verify-overlay.ps1</c>
+    /// to verify the overlay's visual surface end-to-end without needing a
+    /// running backend or a real off-list app to trigger enforcement.
+    /// </summary>
+    public const string ShowTestOverlayArg = "--show-test-overlay";
+
+    /// <summary>
     /// Dev-only flag (#44): swap <c>WamTokenProvider</c> for
     /// <c>InjectedTokenProvider</c> so the agent skips interactive sign-in
     /// entirely and authenticates to the backend via the
@@ -38,6 +47,7 @@ public static class Program
     public const string StatusEndpointArg = "--status-endpoint";
 
     public static bool ShowTestToast { get; private set; }
+    public static bool ShowTestOverlay { get; private set; }
     public static bool InjectToken { get; private set; }
     public static int? StatusEndpointPort { get; private set; }
 
@@ -45,14 +55,15 @@ public static class Program
     public static int Main(string[] args)
     {
         ShowTestToast = args.Any(a => string.Equals(a, ShowTestToastArg, StringComparison.OrdinalIgnoreCase));
+        ShowTestOverlay = args.Any(a => string.Equals(a, ShowTestOverlayArg, StringComparison.OrdinalIgnoreCase));
         InjectToken = args.Any(a => string.Equals(a, InjectTokenArg, StringComparison.OrdinalIgnoreCase));
         StatusEndpointPort = ParsePortAfter(args, StatusEndpointArg);
 
         WinRT.ComWrappersSupport.InitializeComWrappers();
 
-        // Single-instance gating gets in the way of the toast-test loop (each
-        // launch needs to be its own process). Skip it in that mode only.
-        if (!ShowTestToast)
+        // Single-instance gating gets in the way of the self-test loops (each
+        // launch needs to be its own process). Skip it in those modes only.
+        if (!ShowTestToast && !ShowTestOverlay)
         {
             var keyInstance = AppInstance.FindOrRegisterForKey(SingleInstanceKey);
             if (!keyInstance.IsCurrent)

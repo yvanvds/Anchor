@@ -18,6 +18,13 @@ internal static class NativeMethods
     // QueryFullProcessImageName flags
     public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
+    // SetWindowPos hWndInsertAfter values + flags
+    public static readonly nint HWND_TOPMOST = new(-1);
+    public static readonly nint HWND_NOTOPMOST = new(-2);
+    public const uint SWP_NOMOVE = 0x0002;
+    public const uint SWP_NOSIZE = 0x0001;
+    public const uint SWP_NOACTIVATE = 0x0010;
+
     public delegate void WinEventDelegate(
         nint hWinEventHook,
         uint eventType,
@@ -82,4 +89,23 @@ internal static class NativeMethods
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool QueryFullProcessImageNameW(nint hProcess, uint dwFlags, [Out] StringBuilder lpExeName, ref uint lpdwSize);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetWindowPos(nint hWnd, nint hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+    public delegate bool EnumWindowsProc(nint hWnd, nint lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, nint lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsWindowVisible(nint hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern nint GetWindow(nint hWnd, uint uCmd);
+
+    public const uint GW_OWNER = 4;
 }

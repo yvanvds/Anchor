@@ -19,14 +19,21 @@ public sealed class AllowlistMatcher
 
     public AllowlistMatcher(IEnumerable<AllowedAppRule> rules, string? ownProcessName = null)
     {
-        _rules = BaselineRules
-            .Concat(rules ?? Array.Empty<AllowedAppRule>())
+        UserRules = (rules ?? Array.Empty<AllowedAppRule>())
             .Where(r => !string.IsNullOrWhiteSpace(r.Value))
             .ToImmutableArray();
+        _rules = BaselineRules.AddRange(UserRules);
         _ownProcessName = string.IsNullOrWhiteSpace(ownProcessName)
             ? null
             : NormalizeProcessName(ownProcessName);
     }
+
+    /// <summary>
+    /// The teacher-supplied (non-baseline) rules. Baseline entries like Edge
+    /// and explorer are uninteresting in user-facing displays such as the
+    /// focus overlay's allowed-apps list, so they're excluded here.
+    /// </summary>
+    public ImmutableArray<AllowedAppRule> UserRules { get; }
 
     public bool IsAllowed(AppInfo app)
     {
