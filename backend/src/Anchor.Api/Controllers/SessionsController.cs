@@ -1,4 +1,5 @@
 using Anchor.Api.Realtime;
+using Anchor.Api.Sessions;
 using Anchor.Domain.Classes;
 using Anchor.Domain.Events;
 using Anchor.Domain.Sessions;
@@ -18,21 +19,31 @@ public sealed class SessionsController : ControllerBase
     private const int JoinCodeGenerationAttempts = 10;
     private const int RecentEventsLimit = 50;
 
+    /// <summary>
+    /// A typed join code stops being honoured once the session is this old,
+    /// even if it has not been ended. Prevents a leaked code from a stale
+    /// (probably-forgotten) session granting access hours later.
+    /// </summary>
+    public static readonly TimeSpan JoinCodeFreshnessWindow = TimeSpan.FromHours(4);
+
     private readonly AnchorDbContext _db;
     private readonly IUserStore _users;
     private readonly ISessionBroadcaster _broadcaster;
     private readonly TimeProvider _clock;
+    private readonly JoinByCodeRateLimiter _joinByCodeLimiter;
 
     public SessionsController(
         AnchorDbContext db,
         IUserStore users,
         ISessionBroadcaster broadcaster,
-        TimeProvider clock)
+        TimeProvider clock,
+        JoinByCodeRateLimiter joinByCodeLimiter)
     {
         _db = db;
         _users = users;
         _broadcaster = broadcaster;
         _clock = clock;
+        _joinByCodeLimiter = joinByCodeLimiter;
     }
 
     [HttpPost]
@@ -270,6 +281,103 @@ public sealed class SessionsController : ControllerBase
         return Ok(sessions);
     }
 
+    [HttpPost("join-by-code")]
+    [ProducesResponseType(typeof(JoinByCodeResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(JoinByCodeErrorResponse), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(JoinByCodeErrorResponse), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(JoinByCodeErrorResponse), StatusCodes.Status410Gone)]
+    [ProducesResponseType(typeof(JoinByCodeErrorResponse), StatusCodes.Status429TooManyRequests)]
+    public async Task<ActionResult<JoinByCodeResponse>> JoinByCode(
+        [FromBody] JoinByCodeRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!User.TryGetEntraOid(out var entraOid))
+            return Unauthorized();
+
+        var caller = await _users.FindByEntraOidAsync(entraOid, cancellationToken);
+        if (caller is null)
+            return Unauthorized();
+
+        var code = (request.Code ?? string.Empty).Trim();
+        if (code.Length != 6 || !code.All(char.IsDigit))
+            return ValidationProblem("Join code must be 6 digits.");
+
+        // Rate-limit checked up-front so a flood of attempts can't itself
+        // become the DoS by saturating the DB.
+        if (_joinByCodeLimiter.IsBlocked(caller.Id))
+            return JoinByCodeError(StatusCodes.Status429TooManyRequests, "Too many attempts, try again shortly.");
+
+        var session = await _db.Sessions.FirstOrDefaultAsync(s => s.JoinCode == code, cancellationToken);
+        if (session is null)
+        {
+            _joinByCodeLimiter.RecordFailure(caller.Id);
+            return JoinByCodeError(StatusCodes.Status404NotFound, "Code not found.");
+        }
+
+        var now = _clock.GetUtcNow();
+        var expired = session.EndedAt is not null || (now - session.StartedAt) > JoinCodeFreshnessWindow;
+        if (expired)
+        {
+            _joinByCodeLimiter.RecordFailure(caller.Id);
+            return JoinByCodeError(StatusCodes.Status410Gone, "Session has ended.");
+        }
+
+        // "Already in a different session" = participant of some OTHER non-ended
+        // session with JoinedAt set, LeftAt null, DeclinedAt null. Mirrors the
+        // active-membership shape used by /sessions/rejoinable.
+        var inOtherActive = await _db.SessionParticipants.AsNoTracking().AnyAsync(
+            p => p.UserId == caller.Id &&
+                 p.SessionId != session.Id &&
+                 p.JoinedAt != null &&
+                 p.LeftAt == null &&
+                 p.DeclinedAt == null &&
+                 p.Session!.EndedAt == null,
+            cancellationToken);
+        if (inOtherActive)
+        {
+            _joinByCodeLimiter.RecordFailure(caller.Id);
+            return JoinByCodeError(StatusCodes.Status409Conflict, "You're already in a focus session.");
+        }
+
+        var participant = await _db.SessionParticipants.FirstOrDefaultAsync(
+            p => p.SessionId == session.Id && p.UserId == caller.Id, cancellationToken);
+        if (participant is null)
+        {
+            participant = new SessionParticipant
+            {
+                SessionId = session.Id,
+                UserId = caller.Id,
+            };
+            _db.SessionParticipants.Add(participant);
+        }
+        else
+        {
+            // Idempotent rejoin: re-running the manual flow against the same
+            // session (e.g. dialog retry) should not turn into an error.
+            participant.LeftAt = null;
+            participant.DeclinedAt = null;
+        }
+
+        await _db.SaveChangesAsync(cancellationToken);
+        _joinByCodeLimiter.Reset(caller.Id);
+
+        // Single-target SessionStarted: the agent's existing handler picks
+        // this up and the #31 join-confirmation flow takes over. Keeping the
+        // payload identical to the roster-based push means the agent needs
+        // no new client-side branch.
+        await _broadcaster.SessionStartedAsync(
+            new SessionStartedPayload(session.Id, session.ClassId, session.Mode.ToString(), session.StartedAt, session.JoinCode),
+            new[] { caller.Id },
+            cancellationToken);
+
+        return Ok(new JoinByCodeResponse(session.Id));
+    }
+
+    private static ObjectResult JoinByCodeError(int statusCode, string message) =>
+        new(new JoinByCodeErrorResponse(message)) { StatusCode = statusCode };
+
     private async Task<string> GenerateUniqueJoinCodeAsync(CancellationToken cancellationToken)
     {
         for (var attempt = 0; attempt < JoinCodeGenerationAttempts; attempt++)
@@ -328,3 +436,9 @@ public sealed record SessionEventSummary(
     EventKind Kind,
     string PayloadJson,
     DateTimeOffset OccurredAt);
+
+public sealed record JoinByCodeRequest(string Code);
+
+public sealed record JoinByCodeResponse(Guid SessionId);
+
+public sealed record JoinByCodeErrorResponse(string Message);

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../api/auth_token_store.dart';
@@ -33,6 +34,7 @@ class _SessionPageState extends State<SessionPage> {
   bool _ending = false;
   bool _ended = false;
   String? _error;
+  SessionDetail? _detail;
 
   @override
   void initState() {
@@ -41,7 +43,27 @@ class _SessionPageState extends State<SessionPage> {
       apiBaseUrl: widget.apiBaseUrl,
       tokenProvider: () async => widget.tokens.token,
     );
+    _loadDetail();
     _connect();
+  }
+
+  Future<void> _loadDetail() async {
+    try {
+      final detail = await widget.sessions.getSession(widget.sessionId);
+      if (!mounted) return;
+      setState(() => _detail = detail);
+    } catch (_) {
+      // Non-fatal: the live event stream still works without the detail block.
+      // The join-code panel just won't render.
+    }
+  }
+
+  Future<void> _copyJoinCode(String code) async {
+    await Clipboard.setData(ClipboardData(text: code));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Copied $code'), duration: const Duration(seconds: 2)),
+    );
   }
 
   Future<void> _connect() async {
@@ -125,6 +147,11 @@ class _SessionPageState extends State<SessionPage> {
               padding: const EdgeInsets.all(12),
               child: Text(_error!),
             ),
+          if (_detail != null && _detail!.joinCode.isNotEmpty && !_ended)
+            _JoinCodePanel(
+              code: _detail!.joinCode,
+              onCopy: () => _copyJoinCode(_detail!.joinCode),
+            ),
           if (_ended)
             Container(
               width: double.infinity,
@@ -153,6 +180,57 @@ class _SessionPageState extends State<SessionPage> {
                       );
                     },
                   ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _JoinCodePanel extends StatelessWidget {
+  const _JoinCodePanel({required this.code, required this.onCopy});
+
+  final String code;
+  final VoidCallback onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      color: theme.colorScheme.surfaceContainerHighest,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Join code',
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  // Big enough to be legible across a classroom — fallback
+                  // path for any student who didn't get the roster-based
+                  // push (substitute, transferred class, etc).
+                  code,
+                  style: theme.textTheme.displaySmall?.copyWith(
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 8,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Copy code',
+            icon: const Icon(Icons.copy),
+            onPressed: onCopy,
           ),
         ],
       ),
