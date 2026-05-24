@@ -79,6 +79,21 @@ public sealed class SessionCoordinator : IAsyncDisposable
 
     internal async Task HandleSessionStartedAsync(SessionStartedPayload payload, CancellationToken ct = default)
     {
+        // Already joined this session (e.g. the rehydration service rejoined
+        // it just before the teacher's SessionStarted broadcast arrived).
+        // Don't re-prompt or re-call JoinSession — the agent is already in
+        // the correct state. Matches the #54 race-double-join guard.
+        lock (_gate)
+        {
+            if (_joinedSessionId == payload.SessionId)
+            {
+                _log.LogInformation(
+                    "SessionStarted received for already-joined session {SessionId}; skipping toast.",
+                    payload.SessionId);
+                return;
+            }
+        }
+
         // SessionStartedPayload does not yet carry the teacher's display name.
         // Until the dashboard-polish issue lands it, surface a generic label.
         const string teacherPlaceholder = "Your teacher";
@@ -141,6 +156,62 @@ public sealed class SessionCoordinator : IAsyncDisposable
 
         if (joined)
             SessionJoined?.Invoke(this, payload);
+    }
+
+    /// <summary>
+    /// Re-attaches to an already-running session without going through the
+    /// 5-second join-confirmation toast. Used after an agent restart (#54)
+    /// when <c>SessionRehydrationService</c> has discovered, via the
+    /// <c>/sessions/rejoinable</c> endpoint, that the student is still an
+    /// active participant of <paramref name="payload"/>. The student already
+    /// consented to this session before the crash; re-prompting would just
+    /// annoy them.
+    ///
+    /// No-op if already joined to the same session, so a race between
+    /// rehydration and a fresh <c>SessionStarted</c> broadcast can't double-join.
+    /// </summary>
+    public async Task RejoinAsync(SessionStartedPayload payload, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            if (_joinedSessionId == payload.SessionId)
+            {
+                _log.LogDebug("RejoinAsync no-op — already joined {SessionId}.", payload.SessionId);
+                return;
+            }
+        }
+
+        try
+        {
+            await _hub.JoinSessionAsync(payload.SessionId, joinCode: null, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "RejoinAsync: JoinSession failed for {SessionId}", payload.SessionId);
+            return;
+        }
+
+        bool fire;
+        lock (_gate)
+        {
+            // Double-check under the gate in case another path joined between
+            // our pre-check and the hub call returning.
+            if (_joinedSessionId == payload.SessionId)
+            {
+                fire = false;
+            }
+            else
+            {
+                _joinedSessionId = payload.SessionId;
+                fire = true;
+            }
+        }
+
+        if (fire)
+        {
+            _log.LogInformation("Rejoined session {SessionId} after agent restart.", payload.SessionId);
+            SessionJoined?.Invoke(this, payload);
+        }
     }
 
     private void OnSessionEnded(object? sender, Guid sessionId)

@@ -238,6 +238,38 @@ public sealed class SessionsController : ControllerBase
         return Ok(sessions);
     }
 
+    [HttpGet("rejoinable")]
+    [ProducesResponseType(typeof(IReadOnlyList<SessionSummary>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<IReadOnlyList<SessionSummary>>> Rejoinable(CancellationToken cancellationToken)
+    {
+        // Drives the agent's post-restart rehydration (#54). Returns only the
+        // sessions the caller is actively a member of right now -- non-ended,
+        // JoinedAt set, LeftAt null, DeclinedAt null. The agent calls JoinSession
+        // for every entry on the first hub Connected after startup. Server-side
+        // filter so the agent never has to interpret participation state.
+        if (!User.TryGetEntraOid(out var entraOid))
+            return Unauthorized();
+
+        var caller = await _users.FindByEntraOidAsync(entraOid, cancellationToken);
+        if (caller is null)
+            return Unauthorized();
+
+        var rows = await _db.Sessions.AsNoTracking()
+            .Where(s => s.EndedAt == null)
+            .Where(s => _db.SessionParticipants.Any(p =>
+                p.SessionId == s.Id &&
+                p.UserId == caller.Id &&
+                p.JoinedAt != null &&
+                p.LeftAt == null &&
+                p.DeclinedAt == null))
+            .Select(s => new SessionSummary(s.Id, s.ClassId, s.TeacherId, s.Mode, s.StartedAt, s.EndedAt, s.JoinCode))
+            .ToListAsync(cancellationToken);
+        var sessions = rows.OrderByDescending(s => s.StartedAt).ToList();
+
+        return Ok(sessions);
+    }
+
     private async Task<string> GenerateUniqueJoinCodeAsync(CancellationToken cancellationToken)
     {
         for (var attempt = 0; attempt < JoinCodeGenerationAttempts; attempt++)

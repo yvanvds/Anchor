@@ -31,6 +31,7 @@ public partial class App : Application
     private TrayIconHost? _tray;
     private SessionCoordinator? _coordinator;
     private SessionHeartbeatService? _heartbeat;
+    private SessionRehydrationService? _rehydration;
     private FocusSessionController? _focus;
     private ISessionHubConnection? _hub;
     private ConnectionManager? _connection;
@@ -72,6 +73,9 @@ public partial class App : Application
             // its SessionJoined / SessionLeft subscriptions before the first
             // SessionStarted broadcast can possibly arrive.
             _heartbeat = _host.Services.GetRequiredService<SessionHeartbeatService>();
+            // Also resolve the rehydration service eagerly so it's ready when
+            // the connection manager fires its first Connected event below.
+            _rehydration = _host.Services.GetRequiredService<SessionRehydrationService>();
             _focus = _host.Services.GetRequiredService<FocusSessionController>();
             _connection = _host.Services.GetRequiredService<ConnectionManager>();
 
@@ -124,6 +128,12 @@ public partial class App : Application
                 break;
             case ConnectionStatus.Connected:
                 _stuckSince = null;
+                // Issue #54: on first Connected, ask the backend whether this
+                // student is still mid-session and rejoin silently. The service
+                // gates itself to run once per process; later Connected events
+                // (reconnects) are no-ops.
+                if (_rehydration is { } rehydrate)
+                    _ = rehydrate.NotifyConnectedAsync();
                 break;
         }
     }
@@ -271,6 +281,10 @@ public partial class App : Application
         builder.Services.AddSingleton<ISessionUiHost, WinUiSessionUiHost>();
         builder.Services.AddSingleton<SessionCoordinator>();
         builder.Services.AddSingleton<SessionHeartbeatService>();
+        // #54 -- post-restart session rehydration: REST client + the service
+        // that fans backend results into SessionCoordinator.RejoinAsync.
+        builder.Services.AddHttpClient<ISessionRehydrationClient, HttpSessionRehydrationClient>();
+        builder.Services.AddSingleton<SessionRehydrationService>();
         builder.Services.AddSingleton<ConnectionManager>();
 
         builder.Services.AddSingleton<IAppIdentifier, AppIdentifier>();
