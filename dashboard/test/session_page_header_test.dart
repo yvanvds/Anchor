@@ -1,5 +1,6 @@
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/auth_token_store.dart';
+import 'package:anchor_dashboard/api/bundles_api.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
 import 'package:anchor_dashboard/pages/session_page.dart';
 import 'package:flutter/material.dart';
@@ -9,6 +10,14 @@ ApiClient _dummyClient() => ApiClient(
   baseUrl: Uri.parse('http://localhost'),
   tokenProvider: () async => null,
 );
+
+class _FakeBundles extends BundlesApi {
+  _FakeBundles() : super(_dummyClient());
+
+  @override
+  Future<List<BundleSummary>> list({bool includeArchived = false}) async =>
+      const [];
+}
 
 class _FakeSessions extends SessionsApi {
   _FakeSessions({required this.startedAt}) : super(_dummyClient());
@@ -46,6 +55,7 @@ void main() {
           sessionId: '11111111-2222-3333-4444-555555555555',
           tokens: AuthTokenStore(),
           sessions: _FakeSessions(startedAt: started),
+          bundles: _FakeBundles(),
           apiBaseUrl: Uri.parse('http://localhost'),
         ),
       ),

@@ -241,6 +241,57 @@ public class FocusSessionControllerTests
         Assert.Empty(fixtures.Reporter.Reports);
     }
 
+    [Fact]
+    public async Task Bundles_update_for_active_session_rebuilds_matcher()
+    {
+        var fixtures = new Fixtures();
+        var (_, _) = BuildController(fixtures);
+        var payload = NewPayload(apps: new[]
+        {
+            new AllowedAppDto("ProcessName", "winword"),
+        });
+        await fixtures.Hub.RaiseSessionStarted(payload);
+
+        // winword allowed under the initial bundles.
+        fixtures.Watcher.Raise(ForegroundFor("winword", hwnd: 0x100));
+        Assert.Empty(fixtures.Enforcer.Blocked);
+
+        // Teacher swaps bundles: now only notepad is allowed.
+        fixtures.Hub.RaiseBundlesUpdated(new SessionBundlesUpdatedPayload(
+            payload.SessionId,
+            new[] { new AllowedAppDto("ProcessName", "notepad") },
+            Array.Empty<AllowedDomainDto>()));
+
+        // notepad is now allowed, winword is now blocked.
+        fixtures.Watcher.Raise(ForegroundFor("notepad", hwnd: 0x200));
+        Assert.Empty(fixtures.Enforcer.Blocked);
+
+        fixtures.Watcher.Raise(ForegroundFor("winword", hwnd: 0x300));
+        var blocked = Assert.Single(fixtures.Enforcer.Blocked);
+        Assert.Equal((nint)0x300, blocked);
+    }
+
+    [Fact]
+    public async Task Bundles_update_for_other_session_is_ignored()
+    {
+        var fixtures = new Fixtures();
+        var (_, _) = BuildController(fixtures);
+        var payload = NewPayload(apps: new[]
+        {
+            new AllowedAppDto("ProcessName", "winword"),
+        });
+        await fixtures.Hub.RaiseSessionStarted(payload);
+
+        // Update for a different session must not touch the active matcher.
+        fixtures.Hub.RaiseBundlesUpdated(new SessionBundlesUpdatedPayload(
+            Guid.NewGuid(),
+            new[] { new AllowedAppDto("ProcessName", "notepad") },
+            Array.Empty<AllowedDomainDto>()));
+
+        fixtures.Watcher.Raise(ForegroundFor("winword", hwnd: 0x100));
+        Assert.Empty(fixtures.Enforcer.Blocked);
+    }
+
     private static SessionStartedPayload NewPayload(Guid? id = null, IReadOnlyList<AllowedAppDto>? apps = null) => new(
         SessionId: id ?? Guid.NewGuid(),
         ClassId: Guid.NewGuid(),
@@ -296,6 +347,7 @@ public class FocusSessionControllerTests
 #pragma warning restore CS0067
         public event EventHandler<SessionStartedPayload>? SessionStarted;
         public event EventHandler<Guid>? SessionEnded;
+        public event EventHandler<SessionBundlesUpdatedPayload>? SessionBundlesUpdated;
         public List<(Guid SessionId, string Kind, string PayloadJson, DateTimeOffset? At)> Reports { get; } = new();
 
         public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
@@ -322,6 +374,9 @@ public class FocusSessionControllerTests
         }
 
         public void RaiseSessionEnded(Guid sessionId) => SessionEnded?.Invoke(this, sessionId);
+
+        public void RaiseBundlesUpdated(SessionBundlesUpdatedPayload payload) =>
+            SessionBundlesUpdated?.Invoke(this, payload);
     }
 
     private sealed class NoopUi : ISessionUiHost

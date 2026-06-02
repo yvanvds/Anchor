@@ -246,6 +246,49 @@ public class SessionCoordinatorTests
         Assert.Equal(TimeSpan.FromSeconds(5), shown.Duration);
     }
 
+    [Fact]
+    public async Task SessionBundlesUpdated_for_joined_session_raises_SessionAllowlistUpdated()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi { NextDecision = JoinDecision.Confirmed };
+        var coordinator = NewCoordinator(hub, ui);
+
+        SessionBundlesUpdatedPayload? updated = null;
+        coordinator.SessionAllowlistUpdated += (_, p) => updated = p;
+
+        var payload = Payload();
+        await coordinator.HandleSessionStartedAsync(payload);
+
+        var update = new SessionBundlesUpdatedPayload(
+            payload.SessionId,
+            new[] { new AllowedAppDto("ProcessName", "notepad") },
+            Array.Empty<AllowedDomainDto>());
+        hub.RaiseBundlesUpdated(update);
+
+        Assert.Equal(update, updated);
+    }
+
+    [Fact]
+    public async Task SessionBundlesUpdated_for_unjoined_session_is_dropped()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi { NextDecision = JoinDecision.Confirmed };
+        var coordinator = NewCoordinator(hub, ui);
+
+        var fired = false;
+        coordinator.SessionAllowlistUpdated += (_, _) => fired = true;
+
+        await coordinator.HandleSessionStartedAsync(Payload());
+
+        // Update targets a different session than the one we joined.
+        hub.RaiseBundlesUpdated(new SessionBundlesUpdatedPayload(
+            Guid.NewGuid(),
+            Array.Empty<AllowedAppDto>(),
+            Array.Empty<AllowedDomainDto>()));
+
+        Assert.False(fired);
+    }
+
     private static SessionCoordinator NewCoordinator(FakeHub hub, FakeUi ui)
     {
         var settings = Options.Create(new RealtimeSettings { JoinConfirmationDuration = TimeSpan.FromSeconds(5) });
@@ -261,6 +304,10 @@ public class SessionCoordinatorTests
         public event EventHandler<SessionStartedPayload>? SessionStarted;
         public event EventHandler<Guid>? SessionEnded;
 #pragma warning restore CS0067
+        public event EventHandler<SessionBundlesUpdatedPayload>? SessionBundlesUpdated;
+
+        public void RaiseBundlesUpdated(SessionBundlesUpdatedPayload payload) =>
+            SessionBundlesUpdated?.Invoke(this, payload);
 
         public List<(Guid SessionId, string? JoinCode)> JoinCalls { get; } = new();
         public List<Guid> LeaveCalls { get; } = new();

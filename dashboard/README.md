@@ -27,8 +27,8 @@ The Entra app registration must include `http://localhost:<port>` as an SPA redi
 ## Routes
 
 - `/login` — Microsoft sign-in via MSAL.js (popup flow).
-- `/` — class picker + "Start session" button. Defaults to the class matching the teacher's `department` claim if present, otherwise the first class returned by the API.
-- `/session/:id` — live session view. Opens a SignalR connection to `/hubs/session`, lists incoming events (`SessionStarted`, `BundleUpdated`, `SessionEnded`). "End session" button calls `POST /sessions/{id}/end`.
+- `/` — class picker + "Start session" button. Defaults to the class matching the teacher's `department` claim if present, otherwise the first class returned by the API. Sessions start with no bundles (baseline-only enforcement).
+- `/session/:id` — live session view. Opens a SignalR connection to `/hubs/session`, lists incoming events (`SessionStarted`, `SessionEnded`, `UnblockRequested`). Bundles are added/removed here at any time via `PUT /sessions/{id}/bundles`, which pushes the recomputed allowlist to agents/extensions. "End session" button calls `POST /sessions/{id}/end`.
 
 ## Auth flow
 

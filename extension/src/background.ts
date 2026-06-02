@@ -6,12 +6,14 @@ import {
   clearActiveSession,
   getActiveSession,
   mergeAddedDomains,
+  replaceDomains,
   setActiveSession,
 } from './shared/session-state';
 import type {
   ActiveSessionState,
   AllowlistAmendedPayload,
   ExtensionRuntimeMessage,
+  SessionBundlesUpdatedPayload,
   SessionStartedPayload,
   UnblockRequestPayload,
 } from './shared/types';
@@ -60,6 +62,7 @@ async function ensureHub(): Promise<void> {
     onSessionStarted: handleSessionStarted,
     onSessionEnded: handleSessionEnded,
     onAllowlistAmended: handleAllowlistAmended,
+    onSessionBundlesUpdated: handleSessionBundlesUpdated,
   });
   try {
     await hubClient.start();
@@ -134,6 +137,26 @@ async function handleAllowlistAmended(payload: AllowlistAmendedPayload): Promise
     // is open; not worth surfacing as an error.
     log.debug('no runtime listeners for allowlist-amended (expected if no block page open)', err);
   }
+}
+
+async function handleSessionBundlesUpdated(payload: SessionBundlesUpdatedPayload): Promise<void> {
+  // Full replacement of this student's domain set after the teacher changed
+  // the session's bundles. The payload already folds in the student's unblock
+  // grants, so a straight replace can't lose them.
+  const next = await replaceDomains(payload.sessionId, payload.domains ?? []);
+  if (!next) {
+    log.warn('SessionBundlesUpdated dropped — no matching active session in cache', {
+      sessionId: payload.sessionId,
+    });
+    return;
+  }
+  log.info('active session allowlist replaced', {
+    sessionId: payload.sessionId,
+    domainCount: next.domains.length,
+  });
+  // New navigations are filtered against the new set immediately; already-open
+  // tabs re-evaluate on their next navigation (parity with the agent, which
+  // re-checks the foreground app on its next change).
 }
 
 // ---------------------------------------------------------------------------

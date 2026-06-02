@@ -19,7 +19,7 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
 
     public ConcurrentBag<SessionStartedCall> SessionStartedCalls { get; } = new();
     public ConcurrentBag<Guid> SessionEndedCalls { get; } = new();
-    public ConcurrentBag<BundleUpdatedPayload> BundleUpdatedCalls { get; } = new();
+    public ConcurrentBag<SessionBundlesUpdatedCall> SessionBundlesUpdatedCalls { get; } = new();
     public ConcurrentBag<HeartbeatLostPayload> HeartbeatLostCalls { get; } = new();
     public ConcurrentBag<AgentReconnectedPayload> AgentReconnectedCalls { get; } = new();
     public ConcurrentBag<AllowlistAmendedPayload> AllowlistAmendedCalls { get; } = new();
@@ -47,10 +47,10 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
         return _hub.Clients.Group(SessionHub.GroupName(sessionId)).SessionEnded(sessionId);
     }
 
-    public Task BundleUpdatedAsync(BundleUpdatedPayload payload, CancellationToken cancellationToken = default)
+    public Task SessionBundlesUpdatedAsync(Guid userId, SessionBundlesUpdatedPayload payload, CancellationToken cancellationToken = default)
     {
-        BundleUpdatedCalls.Add(payload);
-        return _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).BundleUpdated(payload);
+        SessionBundlesUpdatedCalls.Add(new SessionBundlesUpdatedCall(userId, payload));
+        return _hub.Clients.Group(SessionHub.UserGroupName(userId)).SessionBundlesUpdated(payload);
     }
 
     public Task HeartbeatLostAsync(HeartbeatLostPayload payload, CancellationToken cancellationToken = default)
@@ -82,4 +82,9 @@ public sealed record SessionStartedCall(SessionStartedPayload Payload, IReadOnly
 {
     public Guid SessionId => Payload.SessionId;
     public string JoinCode => Payload.JoinCode;
+}
+
+public sealed record SessionBundlesUpdatedCall(Guid UserId, SessionBundlesUpdatedPayload Payload)
+{
+    public Guid SessionId => Payload.SessionId;
 }

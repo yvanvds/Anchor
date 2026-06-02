@@ -332,6 +332,25 @@ class SessionsApi {
     _ensureOk(res);
   }
 
+  /// Replace the live session's bundle set (#93). The backend recomputes each
+  /// connected student's allowlist and pushes it over SignalR. Returns the
+  /// session's resulting bundles.
+  Future<List<SessionBundleInfo>> updateBundles(
+    String sessionId,
+    List<String> bundleIds,
+  ) async {
+    final res = await _client.put(
+      'sessions/$sessionId/bundles',
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'bundleIds': bundleIds}),
+    );
+    _ensureOk(res);
+    final json = jsonDecode(res.body) as Map<String, dynamic>;
+    return ((json['bundles'] as List<dynamic>?) ?? const <dynamic>[])
+        .map((e) => SessionBundleInfo.fromJson(e as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
   Future<List<UnblockRequestSummary>> unblockRequests(String sessionId) async {
     final res = await _client.get('sessions/$sessionId/unblock-requests');
     _ensureOk(res);

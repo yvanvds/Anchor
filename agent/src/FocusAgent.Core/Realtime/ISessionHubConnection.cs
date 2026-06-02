@@ -9,6 +9,7 @@ public interface ISessionHubConnection : IAsyncDisposable
     event EventHandler<AgentConnectionState>? StateChanged;
     event EventHandler<SessionStartedPayload>? SessionStarted;
     event EventHandler<Guid>? SessionEnded;
+    event EventHandler<SessionBundlesUpdatedPayload>? SessionBundlesUpdated;
 
     Task StartAsync(CancellationToken ct = default);
     Task StopAsync(CancellationToken ct = default);

@@ -59,16 +59,6 @@ class SessionHubClient {
       );
     });
 
-    connection.on('BundleUpdated', (args) {
-      final payload =
-          args != null && args.isNotEmpty && args.first is Map
-              ? Map<String, dynamic>.from(args.first as Map)
-              : <String, dynamic>{};
-      _events.add(
-        SessionEvent(kind: 'BundleUpdated', payload: payload, at: DateTime.now()),
-      );
-    });
-
     connection.on('UnblockRequested', (args) {
       final payload =
           args != null && args.isNotEmpty && args.first is Map

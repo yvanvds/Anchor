@@ -35,6 +35,7 @@ public sealed class SessionCoordinator : IAsyncDisposable
 
         _hub.SessionStarted += OnSessionStarted;
         _hub.SessionEnded += OnSessionEnded;
+        _hub.SessionBundlesUpdated += OnSessionBundlesUpdated;
     }
 
     public JoinConfirmation? ActiveConfirmation
@@ -64,6 +65,14 @@ public sealed class SessionCoordinator : IAsyncDisposable
     /// or local cleanup. Subscribers should stop any in-session work.
     /// </summary>
     public event EventHandler<Guid>? SessionLeft;
+
+    /// <summary>
+    /// Fires when the teacher changes the bundles of the currently-joined
+    /// session (#93). Carries the full recomputed allowlist; subscribers should
+    /// replace their enforcement rules. Only raised for the joined session —
+    /// updates for any other session are dropped here.
+    /// </summary>
+    public event EventHandler<SessionBundlesUpdatedPayload>? SessionAllowlistUpdated;
 
     private async void OnSessionStarted(object? sender, SessionStartedPayload payload)
     {
@@ -214,6 +223,26 @@ public sealed class SessionCoordinator : IAsyncDisposable
         }
     }
 
+    private void OnSessionBundlesUpdated(object? sender, SessionBundlesUpdatedPayload payload)
+    {
+        bool forJoinedSession;
+        lock (_gate)
+        {
+            forJoinedSession = _joinedSessionId == payload.SessionId;
+        }
+
+        if (!forJoinedSession)
+        {
+            _log.LogDebug(
+                "Ignoring SessionBundlesUpdated for {SessionId} — not the joined session.",
+                payload.SessionId);
+            return;
+        }
+
+        _log.LogInformation("Allowlist updated for joined session {SessionId}", payload.SessionId);
+        SessionAllowlistUpdated?.Invoke(this, payload);
+    }
+
     private void OnSessionEnded(object? sender, Guid sessionId)
     {
         try
@@ -257,6 +286,7 @@ public sealed class SessionCoordinator : IAsyncDisposable
     {
         _hub.SessionStarted -= OnSessionStarted;
         _hub.SessionEnded -= OnSessionEnded;
+        _hub.SessionBundlesUpdated -= OnSessionBundlesUpdated;
         JoinConfirmation? active;
         Guid? joined;
         lock (_gate)

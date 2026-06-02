@@ -43,7 +43,6 @@ GoRouter buildRouter({
           tokens: tokens,
           auth: auth,
           sessions: sessions,
-          bundles: bundles,
         ),
       ),
       GoRoute(
@@ -52,6 +51,7 @@ GoRouter buildRouter({
           sessionId: state.pathParameters['id']!,
           tokens: tokens,
           sessions: sessions,
+          bundles: bundles,
           apiBaseUrl: apiBaseUrl,
         ),
       ),

@@ -30,7 +30,19 @@ public sealed record AllowedAppDto(string MatchKind, string Value);
 /// </summary>
 public sealed record AllowedDomainDto(string MatchType, string Value);
 
-public sealed record BundleUpdatedPayload(Guid SessionId, Guid BundleId);
+/// <summary>
+/// Full replacement of one student's session allowlist after the teacher
+/// changes the session's bundles mid-session (#93). Carries the recomputed
+/// baseline + bundle apps/domains, with the student's own unblock grants (#73)
+/// already folded into <see cref="Domains"/>. Pushed to the student's user
+/// group so both their agent (apps) and extension (domains) update. Unlike
+/// <see cref="AllowlistAmendedPayload"/> (a delta), this is the authoritative
+/// new allowlist — consumers replace, not merge.
+/// </summary>
+public sealed record SessionBundlesUpdatedPayload(
+    Guid SessionId,
+    IReadOnlyList<AllowedAppDto> Apps,
+    IReadOnlyList<AllowedDomainDto> Domains);
 
 public sealed record HeartbeatLostPayload(Guid SessionId, Guid UserId, DateTimeOffset LastSeenAt);
 

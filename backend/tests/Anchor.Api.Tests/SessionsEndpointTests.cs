@@ -349,6 +349,178 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    // ------- PUT /sessions/{id}/bundles -------
+
+    [Fact]
+    public async Task PUT_session_bundles_unauthenticated_returns_401()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+
+        using var client = _factory.CreateClient();
+        var response = await client.PutAsJsonAsync(
+            $"/sessions/{session.Id}/bundles", new UpdateSessionBundlesRequest(Array.Empty<Guid>()));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PUT_session_bundles_as_student_returns_403()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetStudent(client, scenario.Students[0]);
+
+        var response = await client.PutAsJsonAsync(
+            $"/sessions/{session.Id}/bundles", new UpdateSessionBundlesRequest(Array.Empty<Guid>()));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PUT_session_bundles_by_non_owning_teacher_returns_403()
+    {
+        var owned = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var other = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, owned.Teacher.Id, owned.Class.Id, owned.Students.Select(s => s.Id).ToList());
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, other.Teacher);
+
+        var response = await client.PutAsJsonAsync(
+            $"/sessions/{session.Id}/bundles", new UpdateSessionBundlesRequest(Array.Empty<Guid>()));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PUT_session_bundles_for_missing_session_returns_404()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.PutAsJsonAsync(
+            $"/sessions/{Guid.NewGuid()}/bundles", new UpdateSessionBundlesRequest(Array.Empty<Guid>()));
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PUT_session_bundles_for_ended_session_returns_400()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList(), ended: true);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.PutAsJsonAsync(
+            $"/sessions/{session.Id}/bundles", new UpdateSessionBundlesRequest(Array.Empty<Guid>()));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PUT_session_bundles_with_unknown_bundle_returns_400()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.PutAsJsonAsync(
+            $"/sessions/{session.Id}/bundles", new UpdateSessionBundlesRequest(new[] { Guid.NewGuid() }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PUT_session_bundles_replaces_set_and_broadcasts_to_active_participants()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        var oldBundle = await TestSeed.AddBundleAsync(_factory, "PutBundles-Old");
+        var newBundle = await TestSeed.AddBundleAsync(_factory, "PutBundles-New");
+        await TestSeed.AddBundleEntryAsync(_factory, newBundle.Id, BundleEntryKind.Domain, "*.smartschool.be", BundleEntryMatchType.Wildcard);
+
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+        await AttachBundleAsync(session.Id, oldBundle.Id);
+        // Only student 0 is actively joined; student 1 hasn't confirmed yet.
+        await SetParticipantStateAsync(session.Id, scenario.Students[0].Id, joinedAt: DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
+        broadcaster.SessionBundlesUpdatedCalls.Clear();
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.PutAsJsonAsync(
+            $"/sessions/{session.Id}/bundles", new UpdateSessionBundlesRequest(new[] { newBundle.Id }));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<UpdateSessionBundlesResponse>();
+        Assert.NotNull(body);
+        var returned = Assert.Single(body!.Bundles);
+        Assert.Equal(newBundle.Id, returned.Id);
+
+        // Old bundle is gone, new bundle persisted (replace, not append).
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var persisted = await db.SessionBundles.AsNoTracking()
+            .Where(sb => sb.SessionId == session.Id)
+            .Select(sb => sb.BundleId)
+            .ToListAsync();
+        Assert.Equal(new[] { newBundle.Id }, persisted);
+
+        // Only the actively-joined student gets the push.
+        var call = Assert.Single(broadcaster.SessionBundlesUpdatedCalls, c => c.SessionId == session.Id);
+        Assert.Equal(scenario.Students[0].Id, call.UserId);
+        Assert.Contains(call.Payload.Domains, d => d.Value == "*.smartschool.be" && d.MatchType == "Wildcard");
+        Assert.Contains(call.Payload.Apps, a => a.Value == "msedge" && a.MatchKind == "ProcessName");
+    }
+
+    [Fact]
+    public async Task PUT_session_bundles_folds_each_students_grants_into_their_payload()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+        await SetParticipantStateAsync(session.Id, scenario.Students[0].Id, joinedAt: DateTimeOffset.UtcNow.AddMinutes(-2));
+        await SetParticipantStateAsync(session.Id, scenario.Students[1].Id, joinedAt: DateTimeOffset.UtcNow.AddMinutes(-2));
+        // Student 0 has an approved unblock grant; student 1 does not.
+        await AddUnblockGrantAsync(session.Id, scenario.Students[0].Id, "reddit.com",
+            new DateTimeOffset(2026, 1, 1, 9, 0, 0, TimeSpan.Zero));
+
+        var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
+        broadcaster.SessionBundlesUpdatedCalls.Clear();
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.PutAsJsonAsync(
+            $"/sessions/{session.Id}/bundles", new UpdateSessionBundlesRequest(Array.Empty<Guid>()));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var calls = broadcaster.SessionBundlesUpdatedCalls.Where(c => c.SessionId == session.Id).ToList();
+        Assert.Equal(2, calls.Count);
+
+        var withGrant = Assert.Single(calls, c => c.UserId == scenario.Students[0].Id);
+        Assert.Contains(withGrant.Payload.Domains, d => d.Value == "reddit.com" && d.MatchType == "Suffix");
+
+        var withoutGrant = Assert.Single(calls, c => c.UserId == scenario.Students[1].Id);
+        Assert.DoesNotContain(withoutGrant.Payload.Domains, d => d.Value == "reddit.com");
+    }
+
     // ------- GET /sessions/{id} -------
 
     [Fact]

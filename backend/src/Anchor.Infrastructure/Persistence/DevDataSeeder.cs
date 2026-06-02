@@ -121,6 +121,14 @@ public static class DevDataSeeder
             {
                 new EntrySeed("*.bingel.be", BundleEntryMatchType.Wildcard),
             }),
+            // App-bearing bundle: the agent enforces apps (not domains), so the
+            // headless verify-bundle-switch script needs a bundle whose
+            // expansion adds an allowed *app* to observe the agent rebuild its
+            // matcher mid-session.
+            new BundleSeed("Notepad (dev)", new[]
+            {
+                new EntrySeed("notepad", BundleEntryMatchType.Exact, BundleEntryKind.App),
+            }),
         };
 
         var changed = false;
@@ -137,7 +145,7 @@ public static class DevDataSeeder
                 db.BundleEntries.Add(new BundleEntry
                 {
                     BundleId = bundle.Id,
-                    Kind = BundleEntryKind.Domain,
+                    Kind = entry.Kind,
                     Value = entry.Value,
                     MatchType = entry.MatchType,
                 });
@@ -150,7 +158,10 @@ public static class DevDataSeeder
     }
 
     private sealed record BundleSeed(string Name, IReadOnlyList<EntrySeed> Entries);
-    private sealed record EntrySeed(string Value, BundleEntryMatchType MatchType);
+    private sealed record EntrySeed(
+        string Value,
+        BundleEntryMatchType MatchType,
+        BundleEntryKind Kind = BundleEntryKind.Domain);
 
     /// <summary>
     /// Dev convenience: make sure any real teacher who signs in ends up with a

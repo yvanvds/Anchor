@@ -9,7 +9,7 @@ public interface ISessionBroadcaster
         IReadOnlyCollection<Guid> recipientUserIds,
         CancellationToken cancellationToken = default);
     Task SessionEndedAsync(Guid sessionId, CancellationToken cancellationToken = default);
-    Task BundleUpdatedAsync(BundleUpdatedPayload payload, CancellationToken cancellationToken = default);
+    Task SessionBundlesUpdatedAsync(Guid userId, SessionBundlesUpdatedPayload payload, CancellationToken cancellationToken = default);
     Task HeartbeatLostAsync(HeartbeatLostPayload payload, CancellationToken cancellationToken = default);
     Task AgentReconnectedAsync(AgentReconnectedPayload payload, CancellationToken cancellationToken = default);
     Task AllowlistAmendedAsync(AllowlistAmendedPayload payload, CancellationToken cancellationToken = default);
@@ -50,8 +50,11 @@ internal sealed class SessionBroadcaster : ISessionBroadcaster
         return _hub.Clients.Group(SessionHub.GroupName(sessionId)).SessionEnded(sessionId);
     }
 
-    public Task BundleUpdatedAsync(BundleUpdatedPayload payload, CancellationToken cancellationToken = default)
-        => _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).BundleUpdated(payload);
+    public Task SessionBundlesUpdatedAsync(Guid userId, SessionBundlesUpdatedPayload payload, CancellationToken cancellationToken = default)
+        // Per-student: each student's allowlist differs by their own unblock
+        // grants (#73), so this targets the user group (reaching both the
+        // student's agent and extension) rather than the whole session group.
+        => _hub.Clients.Group(SessionHub.UserGroupName(userId)).SessionBundlesUpdated(payload);
 
     public Task HeartbeatLostAsync(HeartbeatLostPayload payload, CancellationToken cancellationToken = default)
         => _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).HeartbeatLost(payload);

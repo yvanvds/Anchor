@@ -59,6 +59,13 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
             _log.LogInformation("Hub received SessionEnded for session {SessionId}", sessionId);
             SessionEnded?.Invoke(this, sessionId);
         });
+        _connection.On<SessionBundlesUpdatedPayload>("SessionBundlesUpdated", payload =>
+        {
+            _log.LogInformation(
+                "Hub received SessionBundlesUpdated for session {SessionId} ({AppCount} apps / {DomainCount} domains)",
+                payload.SessionId, payload.Apps.Count, payload.Domains.Count);
+            SessionBundlesUpdated?.Invoke(this, payload);
+        });
 
         _connection.Reconnecting += _ =>
         {
@@ -85,6 +92,7 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
     public event EventHandler<AgentConnectionState>? StateChanged;
     public event EventHandler<SessionStartedPayload>? SessionStarted;
     public event EventHandler<Guid>? SessionEnded;
+    public event EventHandler<SessionBundlesUpdatedPayload>? SessionBundlesUpdated;
 
     public async Task StartAsync(CancellationToken ct = default)
     {

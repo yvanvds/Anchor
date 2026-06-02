@@ -76,6 +76,19 @@ export interface AllowlistAmendedPayload {
 }
 
 /**
+ * Full allowlist replacement pushed by the backend when a teacher changes the
+ * session's bundles mid-session (#93). Targets the student's user group, so the
+ * `domains` here already include that student's unblock grants (#73) — the
+ * extension replaces its cached domain set rather than merging. `apps` is for
+ * the co-located agent; the extension only consumes `domains`.
+ */
+export interface SessionBundlesUpdatedPayload {
+  sessionId: string;
+  apps: ReadonlyArray<AllowedAppDto>;
+  domains: ReadonlyArray<AllowedDomainDto>;
+}
+
+/**
  * Wire format for chrome.runtime messages exchanged between the background
  * service worker and the block page. Kept in one discriminated union so a
  * recipient can switch on `kind` without speculating about the shape.
