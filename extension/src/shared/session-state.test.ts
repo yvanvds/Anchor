@@ -1,6 +1,25 @@
-import { describe, it, expect } from 'vitest';
-import { mergeDomainsInto } from './session-state';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { mergeDomainsInto, replaceDomains, setActiveSession } from './session-state';
 import type { ActiveSessionState, AllowedDomainDto } from './types';
+
+// Minimal in-memory chrome.storage.session so the storage-backed helpers can be
+// exercised without a real extension context.
+function installChromeStorageMock(): void {
+  const store: Record<string, unknown> = {};
+  vi.stubGlobal('chrome', {
+    storage: {
+      session: {
+        get: async (key: string) => ({ [key]: store[key] }),
+        set: async (items: Record<string, unknown>) => {
+          Object.assign(store, items);
+        },
+        remove: async (key: string) => {
+          delete store[key];
+        },
+      },
+    },
+  });
+}
 
 const baseState = (domains: AllowedDomainDto[]): ActiveSessionState => ({
   sessionId: 'session-1',
@@ -45,5 +64,32 @@ describe('mergeDomainsInto', () => {
       { matchType: 'Suffix', value: 'reddit.com' },
     ]);
     expect(result.domains).toEqual([{ matchType: 'Suffix', value: 'reddit.com' }]);
+  });
+});
+
+describe('replaceDomains', () => {
+  beforeEach(() => {
+    installChromeStorageMock();
+  });
+
+  it('replaces the cached domain set wholesale for the matching session', async () => {
+    await setActiveSession(baseState([{ matchType: 'Suffix', value: 'office.com' }]));
+    const result = await replaceDomains('session-1', [
+      { matchType: 'Exact', value: 'wikipedia.org' },
+    ]);
+    expect(result?.domains).toEqual([{ matchType: 'Exact', value: 'wikipedia.org' }]);
+  });
+
+  it('drops the update when the session id does not match the cache', async () => {
+    await setActiveSession(baseState([{ matchType: 'Suffix', value: 'office.com' }]));
+    const result = await replaceDomains('other-session', [
+      { matchType: 'Exact', value: 'wikipedia.org' },
+    ]);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when there is no active session', async () => {
+    const result = await replaceDomains('session-1', []);
+    expect(result).toBeNull();
   });
 });

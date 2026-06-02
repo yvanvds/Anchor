@@ -117,6 +117,7 @@ public partial class App : Application
                 _statusEndpoint = new StatusEndpoint(
                     _connection,
                     _coordinator,
+                    _focus,
                     _host.Services.GetRequiredService<ILogger<StatusEndpoint>>());
                 _statusEndpoint.Start(port);
             }
@@ -353,7 +354,14 @@ public partial class App : Application
             builder.Services.AddSingleton<IAuthTokenProvider, WamTokenProvider>();
         }
         builder.Services.AddSingleton<ISessionHubConnection, SignalRSessionHubConnection>();
-        builder.Services.AddSingleton<ISessionUiHost, WinUiSessionUiHost>();
+        // --auto-join (dev only) replaces the WinUI toast with a host that
+        // confirms immediately, so a headless run joins the session and can
+        // receive mid-session bundle pushes (#93). Production always shows the
+        // real toast.
+        if (Program.AutoJoin)
+            builder.Services.AddSingleton<ISessionUiHost, AutoConfirmSessionUiHost>();
+        else
+            builder.Services.AddSingleton<ISessionUiHost, WinUiSessionUiHost>();
         builder.Services.AddSingleton<SessionCoordinator>();
         builder.Services.AddSingleton<SessionHeartbeatService>();
         // #54 -- post-restart session rehydration: REST client + the service

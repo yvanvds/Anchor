@@ -231,6 +231,7 @@ public class SessionHeartbeatServiceTests
         public event EventHandler<AgentConnectionState>? StateChanged;
         public event EventHandler<SessionStartedPayload>? SessionStarted;
         public event EventHandler<Guid>? SessionEnded;
+        public event EventHandler<SessionBundlesUpdatedPayload>? SessionBundlesUpdated;
 #pragma warning restore CS0067
 
         public List<Guid> HeartbeatCalls { get; } = new();

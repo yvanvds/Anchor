@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../api/auth_token_store.dart';
+import '../api/bundles_api.dart';
 import '../api/sessions_api.dart';
 import '../realtime/session_hub_client.dart';
 
@@ -14,12 +15,14 @@ class SessionPage extends StatefulWidget {
     required this.sessionId,
     required this.tokens,
     required this.sessions,
+    required this.bundles,
     required this.apiBaseUrl,
   });
 
   final String sessionId;
   final AuthTokenStore tokens;
   final SessionsApi sessions;
+  final BundlesApi bundles;
   final Uri apiBaseUrl;
 
   @override
@@ -38,6 +41,9 @@ class _SessionPageState extends State<SessionPage> {
   List<UnblockRequestSummary> _pendingRequests = const [];
   final Set<String> _approving = {};
   String? _unblockError;
+  List<BundleSummary>? _availableBundles;
+  bool _updatingBundles = false;
+  String? _bundleError;
 
   @override
   void initState() {
@@ -60,7 +66,42 @@ class _SessionPageState extends State<SessionPage> {
       context.go('/history/${widget.sessionId}');
       return;
     }
-    await Future.wait([_connect(), _loadPendingRequests()]);
+    await Future.wait([_connect(), _loadPendingRequests(), _loadBundles()]);
+  }
+
+  Set<String> get _selectedBundleIds =>
+      {for (final b in _detail?.bundles ?? const <SessionBundleInfo>[]) b.id};
+
+  Future<void> _loadBundles() async {
+    try {
+      final list = await widget.bundles.list();
+      if (!mounted) return;
+      setState(() => _availableBundles = list);
+    } catch (_) {
+      // Non-fatal: the picker just won't render. The session still runs with
+      // whatever bundles it already has.
+    }
+  }
+
+  Future<void> _updateBundles(Set<String> bundleIds) async {
+    setState(() {
+      _updatingBundles = true;
+      _bundleError = null;
+    });
+    try {
+      await widget.sessions.updateBundles(
+        widget.sessionId,
+        bundleIds.toList(growable: false),
+      );
+      // Re-fetch so the chips reflect the source of truth even if this request
+      // raced another change.
+      await _loadDetail();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _bundleError = 'Failed to update bundles: $e');
+    } finally {
+      if (mounted) setState(() => _updatingBundles = false);
+    }
   }
 
   Future<void> _loadDetail() async {
@@ -233,6 +274,22 @@ class _SessionPageState extends State<SessionPage> {
             _JoinCodePanel(
               code: _detail!.joinCode,
               onCopy: () => _copyJoinCode(_detail!.joinCode),
+            ),
+          if (!_ended && _availableBundles != null)
+            _LiveBundlePanel(
+              available: _availableBundles!,
+              selectedIds: _selectedBundleIds,
+              busy: _updatingBundles,
+              error: _bundleError,
+              onToggle: (id, selected) {
+                final next = {..._selectedBundleIds};
+                if (selected) {
+                  next.add(id);
+                } else {
+                  next.remove(id);
+                }
+                _updateBundles(next);
+              },
             ),
           if (_ended)
             Container(
@@ -422,6 +479,82 @@ class _SessionSummaryPanel extends StatelessWidget {
             lines.join(' · '),
             style: theme.textTheme.bodyMedium,
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LiveBundlePanel extends StatelessWidget {
+  const _LiveBundlePanel({
+    required this.available,
+    required this.selectedIds,
+    required this.busy,
+    required this.error,
+    required this.onToggle,
+  });
+
+  final List<BundleSummary> available;
+  final Set<String> selectedIds;
+  final bool busy;
+  final String? error;
+  final void Function(String id, bool selected) onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      color: theme.colorScheme.surfaceContainerHighest,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.collections_bookmark,
+                size: 18,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Allowed bundles',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              if (busy) ...[
+                const SizedBox(width: 12),
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ],
+            ],
+          ),
+          if (error != null) ...[
+            const SizedBox(height: 6),
+            Text(error!, style: TextStyle(color: theme.colorScheme.error)),
+          ],
+          const SizedBox(height: 8),
+          if (available.isEmpty)
+            Text('No bundles available yet.', style: theme.textTheme.bodySmall)
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                for (final b in available)
+                  FilterChip(
+                    label: Text(b.name),
+                    selected: selectedIds.contains(b.id),
+                    onSelected:
+                        busy ? null : (selected) => onToggle(b.id, selected),
+                  ),
+              ],
+            ),
         ],
       ),
     );

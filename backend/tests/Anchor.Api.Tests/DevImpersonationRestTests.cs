@@ -280,7 +280,7 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
         {
             public List<SessionStartedCall> SessionStartedCalls { get; } = new();
             public List<Guid> SessionEndedCalls { get; } = new();
-            public List<BundleUpdatedPayload> BundleUpdatedCalls { get; } = new();
+            public List<SessionBundlesUpdatedCall> SessionBundlesUpdatedCalls { get; } = new();
 
             public Task SessionStartedAsync(
                 SessionStartedPayload payload,
@@ -297,9 +297,9 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
                 return Task.CompletedTask;
             }
 
-            public Task BundleUpdatedAsync(BundleUpdatedPayload payload, CancellationToken cancellationToken = default)
+            public Task SessionBundlesUpdatedAsync(Guid userId, SessionBundlesUpdatedPayload payload, CancellationToken cancellationToken = default)
             {
-                BundleUpdatedCalls.Add(payload);
+                SessionBundlesUpdatedCalls.Add(new SessionBundlesUpdatedCall(userId, payload));
                 return Task.CompletedTask;
             }
 
@@ -317,5 +317,7 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
         }
 
         public sealed record SessionStartedCall(SessionStartedPayload Payload, IReadOnlyList<Guid> RecipientUserIds);
+
+        public sealed record SessionBundlesUpdatedCall(Guid UserId, SessionBundlesUpdatedPayload Payload);
     }
 }

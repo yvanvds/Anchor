@@ -212,6 +212,114 @@ public sealed class SessionsController : ControllerBase
         }
     }
 
+    [HttpPut("{id:guid}/bundles")]
+    [Authorize(Policy = AuthorizationPolicies.Teacher)]
+    [ProducesResponseType(typeof(UpdateSessionBundlesResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<UpdateSessionBundlesResponse>> UpdateBundles(
+        Guid id,
+        [FromBody] UpdateSessionBundlesRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!User.TryGetEntraOid(out var entraOid))
+            return Unauthorized();
+
+        var caller = await _users.FindByEntraOidAsync(entraOid, cancellationToken);
+        if (caller is null)
+            return Unauthorized();
+
+        var session = await _db.Sessions.FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+        if (session is null)
+            return NotFound();
+        if (session.TeacherId != caller.Id)
+            return Forbid();
+        if (session.EndedAt is not null)
+            return ValidationProblem("Session has ended.");
+
+        var bundleIds = (request.BundleIds ?? Array.Empty<Guid>()).Distinct().ToArray();
+        if (bundleIds.Length > 0)
+        {
+            var existingCount = await _db.Bundles.AsNoTracking().CountAsync(b => bundleIds.Contains(b.Id), cancellationToken);
+            if (existingCount != bundleIds.Length)
+                return ValidationProblem("One or more bundle ids do not exist.");
+        }
+
+        // Replace the session's bundle set wholesale — the picker sends the full
+        // desired selection each time, not a delta.
+        var existing = await _db.SessionBundles.Where(sb => sb.SessionId == id).ToListAsync(cancellationToken);
+        _db.SessionBundles.RemoveRange(existing);
+        foreach (var bundleId in bundleIds)
+        {
+            _db.SessionBundles.Add(new SessionBundle { SessionId = id, BundleId = bundleId });
+        }
+        await _db.SaveChangesAsync(cancellationToken);
+
+        // Push the recomputed allowlist to every active participant. Each
+        // student's domains differ by their own unblock grants (#73), so fold
+        // those back in per-user and target the user group — a session-wide
+        // broadcast would wipe grants the teacher already approved.
+        var expanded = await _allowlist.ExpandAsync(bundleIds, cancellationToken);
+
+        var activeParticipantIds = await _db.SessionParticipants.AsNoTracking()
+            .Where(p => p.SessionId == id && p.JoinedAt != null && p.LeftAt == null && p.DeclinedAt == null)
+            .Select(p => p.UserId)
+            .ToListAsync(cancellationToken);
+
+        var grantsByUser = (await _db.SessionUnblockGrants.AsNoTracking()
+                .Where(g => g.SessionId == id)
+                .Select(g => new { g.UserId, g.Host })
+                .ToListAsync(cancellationToken))
+            .GroupBy(g => g.UserId)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Host).ToList());
+
+        foreach (var participantId in activeParticipantIds)
+        {
+            var domains = expanded.Domains;
+            if (grantsByUser.TryGetValue(participantId, out var hosts) && hosts.Count > 0)
+            {
+                // Suffix match mirrors the shape Unblock emits when granting a host.
+                var withGrants = new List<AllowedDomainDto>(expanded.Domains);
+                foreach (var host in hosts)
+                    withGrants.Add(new AllowedDomainDto(AllowedDomainMatchTypes.Suffix, host));
+                domains = DedupeDomains(withGrants);
+            }
+
+            await _broadcaster.SessionBundlesUpdatedAsync(
+                participantId,
+                new SessionBundlesUpdatedPayload(id, expanded.Apps, domains),
+                cancellationToken);
+        }
+
+        var summaries = await _db.SessionBundles.AsNoTracking()
+            .Where(sb => sb.SessionId == id)
+            .Select(sb => new SessionBundleSummary(sb.BundleId, sb.Bundle!.Name))
+            .ToListAsync(cancellationToken);
+
+        return Ok(new UpdateSessionBundlesResponse(id, summaries));
+    }
+
+    /// <summary>
+    /// Dedupes a domain list on (match-type, lowercase value). Mirrors
+    /// <see cref="SessionAllowlistExpander"/>'s private dedup so grant-folded
+    /// lists don't double-list a host already covered by a bundle.
+    /// </summary>
+    private static IReadOnlyList<AllowedDomainDto> DedupeDomains(IEnumerable<AllowedDomainDto> source)
+    {
+        var seen = new HashSet<(string, string)>();
+        var result = new List<AllowedDomainDto>();
+        foreach (var dto in source)
+        {
+            if (string.IsNullOrWhiteSpace(dto.Value)) continue;
+            var key = (dto.MatchType, dto.Value.Trim().ToLowerInvariant());
+            if (seen.Add(key))
+                result.Add(dto);
+        }
+        return result;
+    }
+
     [HttpGet("{id:guid}")]
     [ProducesResponseType(typeof(SessionDetailResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -745,6 +853,10 @@ public sealed record StartSessionResponse(
     string JoinCode);
 
 public sealed record EndSessionResponse(Guid Id, DateTimeOffset EndedAt);
+
+public sealed record UpdateSessionBundlesRequest(IReadOnlyList<Guid>? BundleIds);
+
+public sealed record UpdateSessionBundlesResponse(Guid Id, IReadOnlyList<SessionBundleSummary> Bundles);
 
 public sealed record SessionSummary(
     Guid Id,

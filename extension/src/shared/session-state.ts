@@ -43,6 +43,25 @@ export async function mergeAddedDomains(
 }
 
 /**
+ * Replace the cached active session's domain set wholesale (#93). Used when the
+ * teacher changes the session's bundles mid-session: the backend sends the full
+ * recomputed allowlist (per-student, grants already folded in), so a straight
+ * replace is correct and can't lose grants. Returns the new state, or null if
+ * there's no matching active session to update (a stale push for an unknown
+ * session is dropped rather than applied to the wrong session).
+ */
+export async function replaceDomains(
+  sessionId: string,
+  domains: ReadonlyArray<AllowedDomainDto>,
+): Promise<ActiveSessionState | null> {
+  const current = await getActiveSession();
+  if (current?.sessionId !== sessionId) return null;
+  const next: ActiveSessionState = { ...current, domains: [...domains] };
+  await setActiveSession(next);
+  return next;
+}
+
+/**
  * Pure dedup-merge so the logic can be unit-tested without chrome.storage.
  * Returns the same reference when no changes are needed; that lets callers
  * skip the storage round-trip on a no-op.

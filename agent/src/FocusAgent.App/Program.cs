@@ -46,10 +46,21 @@ public static class Program
     /// </summary>
     public const string StatusEndpointArg = "--status-endpoint";
 
+    /// <summary>
+    /// Dev-only flag (#93): auto-confirm every join-confirmation instead of
+    /// showing the WinUI toast, so a headless run actually <em>joins</em> the
+    /// session (and so receives mid-session <c>SessionBundlesUpdated</c>
+    /// pushes). Used by <c>scripts/dev/verify-bundle-switch.ps1</c> to observe
+    /// the agent rebuild its allowlist when the teacher changes bundles. Off by
+    /// default — production always shows the real toast.
+    /// </summary>
+    public const string AutoJoinArg = "--auto-join";
+
     public static bool ShowTestToast { get; private set; }
     public static bool ShowTestOverlay { get; private set; }
     public static bool InjectToken { get; private set; }
     public static int? StatusEndpointPort { get; private set; }
+    public static bool AutoJoin { get; private set; }
 
     [STAThread]
     public static int Main(string[] args)
@@ -58,6 +69,7 @@ public static class Program
         ShowTestOverlay = args.Any(a => string.Equals(a, ShowTestOverlayArg, StringComparison.OrdinalIgnoreCase));
         InjectToken = args.Any(a => string.Equals(a, InjectTokenArg, StringComparison.OrdinalIgnoreCase));
         StatusEndpointPort = ParsePortAfter(args, StatusEndpointArg);
+        AutoJoin = args.Any(a => string.Equals(a, AutoJoinArg, StringComparison.OrdinalIgnoreCase));
 
         WinRT.ComWrappersSupport.InitializeComWrappers();
 

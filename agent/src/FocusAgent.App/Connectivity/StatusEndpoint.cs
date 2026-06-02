@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using FocusAgent.App.Connectivity;
+using FocusAgent.Core.Focus;
 using FocusAgent.Core.Sessions;
 using Microsoft.Extensions.Logging;
 
@@ -21,7 +22,8 @@ namespace FocusAgent.App.Connectivity;
 ///   GET /status -> {
 ///       connectionStatus, displayName, lastError,
 ///       activeSessionId,   // non-null while the toast is up or the user has joined
-///       joinedSessionId    // non-null after user confirmed
+///       joinedSessionId,   // non-null after user confirmed
+///       allowedApps        // current matcher app rules, or null when not in a session (#93)
 ///   }
 ///
 /// Poll <c>activeSessionId</c> to know whether SessionStarted reached the
@@ -32,6 +34,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
 {
     private readonly ConnectionManager _connection;
     private readonly SessionCoordinator _coordinator;
+    private readonly FocusSessionController _focus;
     private readonly ILogger<StatusEndpoint> _log;
     private readonly HttpListener _listener;
     private CancellationTokenSource? _cts;
@@ -40,10 +43,12 @@ public sealed class StatusEndpoint : IAsyncDisposable
     public StatusEndpoint(
         ConnectionManager connection,
         SessionCoordinator coordinator,
+        FocusSessionController focus,
         ILogger<StatusEndpoint> log)
     {
         _connection = connection;
         _coordinator = coordinator;
+        _focus = focus;
         _log = log;
         _listener = new HttpListener();
     }
@@ -96,6 +101,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 lastError = snap.LastError,
                 activeSessionId = _coordinator.ActiveSessionId,
                 joinedSessionId = _coordinator.JoinedSessionId,
+                allowedApps = _focus.GetActiveAllowedApps(),
             };
             var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
             {

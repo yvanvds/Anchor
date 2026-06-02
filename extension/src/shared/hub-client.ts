@@ -14,6 +14,7 @@ import type { ExtensionSettings } from './settings';
 import type {
   AllowlistAmendedPayload,
   BlockedUrlPayload,
+  SessionBundlesUpdatedPayload,
   SessionStartedPayload,
   UnblockRequestPayload,
 } from './types';
@@ -26,6 +27,7 @@ export interface HubCallbacks {
   onSessionStarted: (payload: SessionStartedPayload) => void | Promise<void>;
   onSessionEnded: (sessionId: string) => void | Promise<void>;
   onAllowlistAmended: (payload: AllowlistAmendedPayload) => void | Promise<void>;
+  onSessionBundlesUpdated: (payload: SessionBundlesUpdatedPayload) => void | Promise<void>;
 }
 
 export class HubClient {
@@ -77,6 +79,14 @@ export class HubClient {
         addedCount: payload.addedDomains?.length ?? 0,
       });
       await callbacks.onAllowlistAmended(payload);
+    });
+
+    this.connection.on('SessionBundlesUpdated', async (payload: SessionBundlesUpdatedPayload) => {
+      log.info('SessionBundlesUpdated received', {
+        sessionId: payload.sessionId,
+        domainCount: payload.domains?.length ?? 0,
+      });
+      await callbacks.onSessionBundlesUpdated(payload);
     });
 
     this.connection.onreconnecting((err) => log.warn('reconnecting', err));

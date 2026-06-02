@@ -51,12 +51,29 @@ public sealed class FocusSessionController : IAsyncDisposable
 
         _sessions.SessionJoined += OnSessionJoined;
         _sessions.SessionLeft += OnSessionLeft;
+        _sessions.SessionAllowlistUpdated += OnAllowlistUpdated;
         _watcher.Changed += OnForegroundChanged;
     }
 
     public Guid? ActiveSessionId
     {
         get { lock (_gate) return _activeSessionId; }
+    }
+
+    /// <summary>
+    /// The currently-enforced allowed-app rule values (process names / paths /
+    /// publishers), or <c>null</c> when no session is active. Dev-only: lets the
+    /// status endpoint surface the live matcher state so headless verify scripts
+    /// can observe a mid-session allowlist rebuild (#93).
+    /// </summary>
+    public IReadOnlyList<string>? GetActiveAllowedApps()
+    {
+        lock (_gate)
+        {
+            if (_activeSessionId is null || _matcher is null)
+                return null;
+            return _matcher.UserRules.Select(r => r.Value).ToArray();
+        }
     }
 
     private void OnSessionJoined(object? sender, SessionStartedPayload payload)
@@ -83,6 +100,34 @@ public sealed class FocusSessionController : IAsyncDisposable
         catch (Exception ex)
         {
             _log.LogError(ex, "Failed to start focus enforcement for session {SessionId}", payload.SessionId);
+        }
+    }
+
+    private void OnAllowlistUpdated(object? sender, SessionBundlesUpdatedPayload payload)
+    {
+        try
+        {
+            var rules = AllowedAppRuleMapper.FromPayload(payload.Apps);
+            lock (_gate)
+            {
+                if (_activeSessionId != payload.SessionId)
+                    return;
+                _matcher = new AllowlistMatcher(rules, ownProcessName: CurrentProcessName());
+                // Drop the coalesce guard so the foreground app is re-evaluated
+                // against the new rules on its next event rather than being
+                // suppressed as a duplicate of the last report.
+                _lastReportedProcessName = null;
+                _lastReportedAt = DateTimeOffset.MinValue;
+            }
+            _log.LogInformation(
+                "Allowlist rebuilt for session {SessionId} with {AppCount} app rules / {DomainCount} domains",
+                payload.SessionId,
+                payload.Apps.Count,
+                payload.Domains.Count);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Failed to rebuild allowlist for session {SessionId}", payload.SessionId);
         }
     }
 
@@ -194,6 +239,7 @@ public sealed class FocusSessionController : IAsyncDisposable
     {
         _sessions.SessionJoined -= OnSessionJoined;
         _sessions.SessionLeft -= OnSessionLeft;
+        _sessions.SessionAllowlistUpdated -= OnAllowlistUpdated;
         _watcher.Changed -= OnForegroundChanged;
         try { _watcher.Stop(); } catch { /* best-effort */ }
         _watcher.Dispose();
