@@ -28,6 +28,7 @@ class _HomePageState extends State<HomePage> {
   String? _error;
   bool _isAdmin = false;
   List<ActiveSession> _activeSessions = const [];
+  final Set<String> _endingSessions = {};
 
   @override
   void initState() {
@@ -106,6 +107,30 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// Ends a running session straight from the home screen so the teacher
+  /// doesn't have to resume into it just to stop it (#126). On success the row
+  /// drops out of the banner; the banner hides itself once none remain.
+  Future<void> _endActiveSession(String sessionId) async {
+    setState(() {
+      _endingSessions.add(sessionId);
+      _error = null;
+    });
+    try {
+      await widget.sessions.endSession(sessionId);
+      if (!mounted) return;
+      setState(() {
+        _activeSessions = _activeSessions
+            .where((s) => s.id != sessionId)
+            .toList(growable: false);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = 'Failed to end session: $e');
+    } finally {
+      if (mounted) setState(() => _endingSessions.remove(sessionId));
+    }
+  }
+
   String _classNameFor(String classId) {
     for (final c in _classes ?? const <ClassSummary>[]) {
       if (c.id == classId) return c.name;
@@ -173,7 +198,9 @@ class _HomePageState extends State<HomePage> {
                   _ActiveSessionsBanner(
                     sessions: _activeSessions,
                     classNameFor: _classNameFor,
+                    ending: _endingSessions,
                     onResume: (id) => context.go('/session/$id'),
+                    onEnd: _endActiveSession,
                   ),
                   const SizedBox(height: 24),
                 ],
@@ -247,12 +274,16 @@ class _ActiveSessionsBanner extends StatelessWidget {
   const _ActiveSessionsBanner({
     required this.sessions,
     required this.classNameFor,
+    required this.ending,
     required this.onResume,
+    required this.onEnd,
   });
 
   final List<ActiveSession> sessions;
   final String Function(String classId) classNameFor;
+  final Set<String> ending;
   final void Function(String sessionId) onResume;
+  final void Function(String sessionId) onEnd;
 
   static String _startedLabel(DateTime startedAt) {
     final local = startedAt.toLocal();
@@ -302,6 +333,8 @@ class _ActiveSessionsBanner extends StatelessWidget {
                       children: [
                         Text(
                           classNameFor(s.classId),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodyLarge?.copyWith(
                             color: theme.colorScheme.onPrimaryContainer,
                             fontWeight: FontWeight.w500,
@@ -317,8 +350,26 @@ class _ActiveSessionsBanner extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 12),
+                  // Stop a session without resuming into it first (#126).
+                  if (ending.contains(s.id))
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 12),
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  else ...[
+                    OutlinedButton.icon(
+                      onPressed: () => onEnd(s.id),
+                      icon: const Icon(Icons.stop),
+                      label: const Text('End'),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
                   FilledButton.tonalIcon(
-                    onPressed: () => onResume(s.id),
+                    onPressed: ending.contains(s.id) ? null : () => onResume(s.id),
                     icon: const Icon(Icons.login),
                     label: const Text('Resume'),
                   ),

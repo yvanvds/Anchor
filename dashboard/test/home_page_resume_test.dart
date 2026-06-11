@@ -42,6 +42,7 @@ class _FakeSessions extends SessionsApi {
 
   final List<ActiveSession> active;
   final List<ClassSummary> classesList;
+  final List<String> endedSessionIds = [];
 
   @override
   Future<MeResponse> me() async =>
@@ -52,6 +53,11 @@ class _FakeSessions extends SessionsApi {
 
   @override
   Future<List<ActiveSession>> activeSessions() async => active;
+
+  @override
+  Future<void> endSession(String sessionId) async {
+    endedSessionIds.add(sessionId);
+  }
 }
 
 void main() {
@@ -110,6 +116,50 @@ void main() {
 
       // Resume carries the session id back into the URL/route.
       expect(find.text('SESSION sess-1'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'End on the banner stops the session in place, no resume detour (#126)',
+    (tester) async {
+      final sessions = _FakeSessions(
+        active: [
+          ActiveSession(
+            id: 'sess-1',
+            classId: 'c1',
+            startedAt: DateTime(2026, 6, 11, 9, 30),
+          ),
+        ],
+        classesList: [
+          ClassSummary(id: 'c1', name: 'Math 101', schoolYear: '2026'),
+        ],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          // NoSplash dodges the undecodable InkSparkle shader on tap (see above).
+          theme: ThemeData(splashFactory: NoSplash.splashFactory),
+          home: HomePage(
+            tokens: AuthTokenStore(),
+            auth: _stubAuth(),
+            sessions: sessions,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Math 101'), findsOneWidget);
+      expect(find.text('End'), findsOneWidget);
+
+      await tester.tap(find.text('End'));
+      await tester.pumpAndSettle();
+
+      // The session was ended via the API, and the banner cleared itself once no
+      // running sessions remained — all without navigating into the session.
+      expect(sessions.endedSessionIds, contains('sess-1'));
+      expect(find.text('Active session'), findsNothing);
+      expect(find.text('End'), findsNothing);
+      expect(find.text('Resume'), findsNothing);
     },
   );
 
