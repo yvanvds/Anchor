@@ -22,7 +22,6 @@ class _FakeClasses extends ClassesApi {
     List<String>? schools,
     this.onBulkImport,
     this.onCreate,
-    this.onDelete,
   }) : _schools = schools ?? const <String>[],
        super(_dummyClient());
 
@@ -30,7 +29,6 @@ class _FakeClasses extends ClassesApi {
   final List<String> _schools;
   final Future<List<ClassMembershipImportResult>> Function(String classId)? onBulkImport;
   final ClassSummary Function(String name, String schoolYear)? onCreate;
-  final void Function(String classId)? onDelete;
   int updateCodesCalls = 0;
   int bulkImportCalls = 0;
   int createCalls = 0;
@@ -63,7 +61,6 @@ class _FakeClasses extends ClassesApi {
   @override
   Future<void> deleteClass(String classId) async {
     deletedClassIds.add(classId);
-    onDelete?.call(classId);
   }
 
   @override
