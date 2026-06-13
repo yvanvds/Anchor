@@ -56,11 +56,23 @@ public static class Program
     /// </summary>
     public const string AutoJoinArg = "--auto-join";
 
+    /// <summary>
+    /// Dev-only flag (#148): swap the real Edge-window scanner for
+    /// <c>SimulatedInPrivateScanner</c>, which always reports one synthetic Edge
+    /// InPrivate window. Lets the headless e2e drive the agent-side InPrivate
+    /// witness end-to-end (detect → report → backend <c>TamperDetected</c>)
+    /// without a real InPrivate browser window, the same way <c>--auto-join</c>
+    /// stands in for the interactive join toast. Off by default — production
+    /// always scans the live window list.
+    /// </summary>
+    public const string SimulateInPrivateArg = "--simulate-inprivate";
+
     public static bool ShowTestToast { get; private set; }
     public static bool ShowTestOverlay { get; private set; }
     public static bool InjectToken { get; private set; }
     public static int? StatusEndpointPort { get; private set; }
     public static bool AutoJoin { get; private set; }
+    public static bool SimulateInPrivate { get; private set; }
 
     [STAThread]
     public static int Main(string[] args)
@@ -70,6 +82,7 @@ public static class Program
         InjectToken = args.Any(a => string.Equals(a, InjectTokenArg, StringComparison.OrdinalIgnoreCase));
         StatusEndpointPort = ParsePortAfter(args, StatusEndpointArg);
         AutoJoin = args.Any(a => string.Equals(a, AutoJoinArg, StringComparison.OrdinalIgnoreCase));
+        SimulateInPrivate = args.Any(a => string.Equals(a, SimulateInPrivateArg, StringComparison.OrdinalIgnoreCase));
 
         WinRT.ComWrappersSupport.InitializeComWrappers();
 

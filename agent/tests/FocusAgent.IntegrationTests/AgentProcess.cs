@@ -18,7 +18,8 @@ internal sealed record StatusSnapshot(
     [property: JsonPropertyName("activeSessionId")] Guid? ActiveSessionId,
     [property: JsonPropertyName("joinedSessionId")] Guid? JoinedSessionId,
     [property: JsonPropertyName("allowedApps")] string[]? AllowedApps,
-    [property: JsonPropertyName("startupSweep")] StartupSweepSnapshot? StartupSweep);
+    [property: JsonPropertyName("startupSweep")] StartupSweepSnapshot? StartupSweep,
+    [property: JsonPropertyName("inPrivateDetections")] int InPrivateDetections);
 
 /// <summary>
 /// The agent's session-start sweep result (#104) as exposed on /status: how many
@@ -73,7 +74,8 @@ internal sealed class AgentProcess : IAsyncDisposable
         string backendUrl,
         string impersonateOid,
         bool autoJoin = false,
-        int? heartbeatIntervalSeconds = null)
+        int? heartbeatIntervalSeconds = null,
+        bool simulateInPrivate = false)
     {
         if (!OperatingSystem.IsWindows())
             throw new InvalidOperationException("The agent exe is Windows-only.");
@@ -89,6 +91,10 @@ internal sealed class AgentProcess : IAsyncDisposable
         psi.ArgumentList.Add("--status-endpoint");
         psi.ArgumentList.Add(statusPort.ToString());
         if (autoJoin) psi.ArgumentList.Add("--auto-join");
+        // #148: swap the real Edge-window scanner for a synthetic one that always
+        // reports an InPrivate window, so the witness path can be driven without a
+        // real InPrivate browser window in the headless run.
+        if (simulateInPrivate) psi.ArgumentList.Add("--simulate-inprivate");
 
         // Honoured only under --inject-token (App.BuildHost layers env vars last
         // in that mode). __ is the config-section delimiter.

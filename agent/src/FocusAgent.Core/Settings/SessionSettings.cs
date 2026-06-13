@@ -13,4 +13,13 @@ public sealed record SessionSettings
     /// emits a HeartbeatLost event.
     /// </summary>
     public int HeartbeatIntervalSeconds { get; init; } = 10;
+
+    /// <summary>
+    /// Interval at which the agent's InPrivate witness (#148) re-scans the open
+    /// Edge windows while in a joined session. A few seconds is responsive enough
+    /// for a teacher's live roster without polling the window list tightly; the
+    /// scan only reports each InPrivate window once, so a short interval doesn't
+    /// produce repeat events.
+    /// </summary>
+    public int InPrivateScanIntervalSeconds { get; init; } = 5;
 }

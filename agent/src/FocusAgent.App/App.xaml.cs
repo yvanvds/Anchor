@@ -35,6 +35,7 @@ public partial class App : Application
     private SessionCoordinator? _coordinator;
     private SessionHeartbeatService? _heartbeat;
     private ExtensionWitnessMonitor? _witnessMonitor;
+    private InPrivateWitnessMonitor? _inPrivateMonitor;
     private SessionRehydrationService? _rehydration;
     private FocusSessionController? _focus;
     private ISessionHubConnection? _hub;
@@ -90,6 +91,10 @@ public partial class App : Application
             // session. Reports only fire on a drop during a joined session.
             _witnessMonitor = _host.Services.GetRequiredService<ExtensionWitnessMonitor>();
             _ = _witnessMonitor.StartAsync();
+            // Resolve the InPrivate witness eagerly (#148) so its SessionJoined /
+            // SessionLeft subscriptions are wired before the first session — the
+            // poll loop starts on join and reports any open Edge InPrivate window.
+            _inPrivateMonitor = _host.Services.GetRequiredService<InPrivateWitnessMonitor>();
             // Also resolve the rehydration service eagerly so it's ready when
             // the connection manager fires its first Connected event below.
             _rehydration = _host.Services.GetRequiredService<SessionRehydrationService>();
@@ -126,6 +131,7 @@ public partial class App : Application
                     _connection,
                     _coordinator,
                     _focus,
+                    _inPrivateMonitor,
                     _host.Services.GetRequiredService<ILogger<StatusEndpoint>>(),
                     // #102: let the headless e2e drive the two new UI actions —
                     // leaving a session and closing the window to the tray —
@@ -434,6 +440,17 @@ public partial class App : Application
             sp.GetRequiredService<ITamperReporter>(),
             () => sp.GetRequiredService<SessionCoordinator>().JoinedSessionId,
             sp.GetRequiredService<ILogger<ExtensionWitnessMonitor>>()));
+
+        // #148 -- agent-side robust InPrivate detection. The scanner enumerates
+        // live Edge windows; the monitor polls it while in a joined session and
+        // reports TamperDetected{inprivate_opened} for each newly-seen InPrivate
+        // window. --simulate-inprivate (dev only) swaps a synthetic scanner so the
+        // headless e2e can drive the path without a real InPrivate window.
+        if (Program.SimulateInPrivate)
+            builder.Services.AddSingleton<IBrowserWindowScanner, SimulatedInPrivateScanner>();
+        else
+            builder.Services.AddSingleton<IBrowserWindowScanner, BrowserWindowScanner>();
+        builder.Services.AddSingleton<InPrivateWitnessMonitor>();
 
         var logDir = AgentLogPaths.LocalAppDataLogDirectory();
         Directory.CreateDirectory(logDir);

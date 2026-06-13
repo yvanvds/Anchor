@@ -116,6 +116,8 @@ internal sealed class BackendClient
                         5 => "AgentKilled",
                         6 => "ManualLeave",
                         7 => "JoinDeclined",
+                        8 => "UnblockApproved",
+                        9 => "TamperDetected",
                         var n => $"Unknown({n})",
                     }
                     : kindElem.GetString() ?? "");
