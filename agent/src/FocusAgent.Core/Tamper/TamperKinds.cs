@@ -18,4 +18,16 @@ public static class TamperKinds
     /// disablement.
     /// </summary>
     public const string ExtensionDisabled = "extension_disabled";
+
+    /// <summary>
+    /// An Edge InPrivate window was open during an active session (#148). The
+    /// extension only ever sees InPrivate windows once it has been allowed in
+    /// InPrivate — which is also the case where it still filters them — so the
+    /// reliable signal is the agent's: it enumerates Edge windows and recognises
+    /// an InPrivate one by its title even when the extension has no incognito
+    /// access (see <c>classifyCreatedWindow</c> in extension/src/shared/tamper.ts).
+    /// Shares the extension's existing in-browser kind string so one dashboard
+    /// flag covers both witnesses.
+    /// </summary>
+    public const string InPrivateOpened = "inprivate_opened";
 }

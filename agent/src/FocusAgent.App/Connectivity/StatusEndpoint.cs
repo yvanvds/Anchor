@@ -3,6 +3,7 @@ using System.Text.Json;
 using FocusAgent.App.Connectivity;
 using FocusAgent.Core.Focus;
 using FocusAgent.Core.Sessions;
+using FocusAgent.Core.Tamper;
 using Microsoft.Extensions.Logging;
 
 namespace FocusAgent.App.Connectivity;
@@ -23,7 +24,8 @@ namespace FocusAgent.App.Connectivity;
 ///       connectionStatus, displayName, lastError,
 ///       activeSessionId,   // non-null while the toast is up or the user has joined
 ///       joinedSessionId,   // non-null after user confirmed
-///       allowedApps        // current matcher app rules, or null when not in a session (#93)
+///       allowedApps,       // current matcher app rules, or null when not in a session (#93)
+///       inPrivateDetections // count of Edge InPrivate windows the agent-side witness has reported (#148)
 ///   }
 ///
 /// Poll <c>activeSessionId</c> to know whether SessionStarted reached the
@@ -42,6 +44,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
     private readonly ConnectionManager _connection;
     private readonly SessionCoordinator _coordinator;
     private readonly FocusSessionController _focus;
+    private readonly InPrivateWitnessMonitor _inPrivate;
     private readonly ILogger<StatusEndpoint> _log;
     private readonly Func<CancellationToken, Task>? _onLeaveSession;
     private readonly Action? _onCloseWindow;
@@ -53,6 +56,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
         ConnectionManager connection,
         SessionCoordinator coordinator,
         FocusSessionController focus,
+        InPrivateWitnessMonitor inPrivate,
         ILogger<StatusEndpoint> log,
         Func<CancellationToken, Task>? onLeaveSession = null,
         Action? onCloseWindow = null)
@@ -60,6 +64,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
         _connection = connection;
         _coordinator = coordinator;
         _focus = focus;
+        _inPrivate = inPrivate;
         _log = log;
         _onLeaveSession = onLeaveSession;
         _onCloseWindow = onCloseWindow;
@@ -146,6 +151,10 @@ public sealed class StatusEndpoint : IAsyncDisposable
                         windowsExamined = sweep.WindowsExamined,
                         minimizedProcesses = sweep.MinimizedProcesses,
                     },
+                // #148: how many Edge InPrivate windows the agent-side witness has
+                // reported this process, so the headless e2e can assert detection
+                // fired without screenshotting a real InPrivate window.
+                inPrivateDetections = _inPrivate.DetectionCount,
             };
             var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
             {
